@@ -1,0 +1,224 @@
+use std::{fs, path::Path, sync::Arc};
+
+use rand::Rng;
+use rand_chacha::rand_core::SeedableRng;
+use rand_chacha::ChaCha20Rng;
+use tokio::time::Duration;
+
+use miden_client::{
+    accounts::{Account, AccountData, AccountStorageMode, AccountType},
+    config::{Endpoint, RpcConfig},
+    crypto::RpoRandomCoin,
+    rpc::TonicRpcClient,
+    store::{
+        sqlite_store::{config::SqliteStoreConfig, SqliteStore},
+        StoreAuthenticator,
+    },
+    transactions::{LocalTransactionProver, ProvingOptions, TransactionKernel, TransactionRequest},
+    Client, ClientError, Felt,
+};
+
+use miden_objects::{
+    accounts::{AccountBuilder, AccountComponent, AuthSecretKey, StorageSlot},
+    assembly::Assembler,
+    crypto::{dsa::rpo_falcon512::SecretKey, hash::rpo::RpoDigest},
+    Word,
+};
+
+pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {
+    // Default values for store and rpc config
+    let store_config = SqliteStoreConfig::default();
+
+     let endpoint = Endpoint::new("http".to_string(), "18.203.155.106".to_string(), 57291);
+    let rpc_config = RpcConfig {
+        endpoint,
+        timeout_ms: 10000,
+    }; 
+    // let rpc_config = RpcConfig::default();
+
+    // Create an SQLite store
+    let store = SqliteStore::new(&store_config)
+        .await
+        .map_err(ClientError::StoreError)?;
+    let arc_store = Arc::new(store);
+
+    // Seed both random coin instances
+    let mut seed_rng = rand::thread_rng();
+    let coin_seed: [u64; 4] = seed_rng.gen();
+    let rng_for_auth = RpoRandomCoin::new(coin_seed.map(Felt::new));
+    let rng_for_client = RpoRandomCoin::new(coin_seed.map(Felt::new));
+
+    // Create an authenticator that references the store
+    let authenticator = StoreAuthenticator::new_with_rng(arc_store.clone(), rng_for_auth);
+
+    // Local prover (you could swap out for delegated proving)
+    let tx_prover = LocalTransactionProver::new(ProvingOptions::default());
+
+    // Build the RPC client
+    let rpc_client = Box::new(TonicRpcClient::new(&rpc_config));
+
+    // Finally create the client
+    let client = Client::new(
+        rpc_client,
+        rng_for_client,
+        arc_store,
+        Arc::new(authenticator),
+        Arc::new(tx_prover),
+        true,
+    );
+
+    Ok(client)
+}
+
+pub fn get_new_pk_and_authenticator() -> (Word, AuthSecretKey) {
+    // Create a deterministic RNG with a zeroed seed for this example.
+    let seed = [0_u8; 32];
+    let mut rng = ChaCha20Rng::from_seed(seed);
+
+    // Generate a new Falcon-512 secret key.
+    let sec_key = SecretKey::with_rng(&mut rng);
+
+    // Convert the Falcon-512 public key into a `Word` (a 4xFelt representation).
+    let pub_key: Word = sec_key.public_key().into();
+
+    // Wrap the secret key in an `AuthSecretKey` for account authentication.
+    let auth_secret_key = AuthSecretKey::RpoFalcon512(sec_key);
+
+    (pub_key, auth_secret_key)
+}
+
+pub fn create_new_account(
+    account_component: AccountComponent,
+) -> (Account, Option<Word>, AuthSecretKey) {
+    // Generate a new public/secret keypair (Falcon-512).
+    let (_pub_key, auth_secret_key) = get_new_pk_and_authenticator();
+
+    // Build a new `Account` using the provided component plus the Falcon-512 verifier.
+    // Uses a random seed for the account’s RNG.
+    let (account, seed) = AccountBuilder::new()
+        .init_seed(ChaCha20Rng::from_entropy().gen()) // random seed
+        .account_type(AccountType::RegularAccountImmutableCode) // account type
+        .storage_mode(AccountStorageMode::Public) // storage mode
+        .with_component(account_component) // main contract logic
+        .build()
+        .unwrap();
+
+    (account, Some(seed), auth_secret_key)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), ClientError> {
+    // -------------------------------------------------------------------------
+    // Initialize the Miden client
+    // -------------------------------------------------------------------------
+    let mut client = initialize_client().await?;
+    println!("Client initialized successfully.");
+
+    // Fetch and display the latest synchronized block number from the node.
+    let sync_summary = client.sync_state().await.unwrap();
+    println!("Latest block: {}", sync_summary.block_num);
+
+    // -------------------------------------------------------------------------
+    // STEP 1: Create a basic counter contract
+    // -------------------------------------------------------------------------
+    println!("\n[STEP 1] Creating Counter Contract.");
+
+    // 1A) Load the MASM file containing an account definition (e.g. a 'counter' contract).
+    let file_path = Path::new("./masm/accounts/counter.masm");
+    let account_code = fs::read_to_string(file_path).unwrap();
+
+    // 1B) Prepare the assembler for compiling contract code (debug mode = true).
+    let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
+
+    // 1C) Compile the account code into an `AccountComponent`
+    //     and initialize it with one storage slot (for our counter).
+    let account_component = AccountComponent::compile(
+        account_code,
+        assembler,
+        vec![StorageSlot::Value(Word::default())],
+    )
+    .unwrap()
+    .with_supports_all_types();
+
+    // 1D) Build a new account for the counter contract, retrieve the account, seed, and secret key.
+    let (counter_contract, counter_seed, auth_secret_key) = create_new_account(account_component);
+
+    println!(
+        "counter_contract hash: {:?}",
+        counter_contract.hash().to_hex()
+    );
+    println!("contract id: {:?}", counter_contract.id().to_hex());
+
+    // 1E) Wrap the contract into `AccountData` with its seed and secret key, then import into the client.
+    let counter_contract_account_data = AccountData::new(
+        counter_contract.clone(),
+        counter_seed,
+        auth_secret_key.clone(),
+    );
+
+    client
+        .import_account(counter_contract_account_data)
+        .await
+        .unwrap();
+
+    // 1F) Print out procedure root hashes for debugging/inspection.
+    let procedures = counter_contract.code().procedure_roots();
+    let procedures_vec: Vec<RpoDigest> = procedures.collect();
+    for (index, procedure) in procedures_vec.iter().enumerate() {
+        println!("Procedure {}: {:?}", index + 1, procedure.to_hex());
+    }
+    println!("number of procedures: {}", procedures_vec.len());
+
+    // -------------------------------------------------------------------------
+    // STEP 2: Call the Counter Contract with a script
+    // -------------------------------------------------------------------------
+    println!("\n[STEP 2] Call Counter Contract With Script");
+
+    client.sync_state().await.unwrap();
+
+    for _i in 0..100 {
+        // 2A) Grab the compiled procedure hash (in this case, the first procedure).
+        let procedure_2_hash = procedures_vec[0].to_hex();
+        let procedure_call = format!("{}", procedure_2_hash);
+
+        // 2B) Load a MASM script that will reference our increment procedure.
+        let file_path = Path::new("./masm/scripts/counter_script.masm");
+        let original_code = fs::read_to_string(file_path).unwrap();
+
+        // 2C) Replace the placeholder `{increment_count}` in the script with the actual procedure call.
+        let replaced_code = original_code.replace("{increment_count}", &procedure_call);
+        println!("Final script:\n{}", replaced_code);
+
+        // 2D) Compile the script (which now references our procedure).
+        let tx_script = client.compile_tx_script(vec![], &replaced_code).unwrap();
+
+        // 2E) Build a transaction request using the custom script.
+        let tx_increment_request = TransactionRequest::new()
+            .with_custom_script(tx_script)
+            .unwrap();
+
+        // 2F) Execute the transaction locally (producing a result).
+        let tx_result = client
+            .new_transaction(counter_contract.id(), tx_increment_request)
+            .await
+            .unwrap();
+
+        let tx_id = tx_result.executed_transaction().id();
+        println!(
+            "View transaction on MidenScan: https://testnet.midenscan.com/tx/{:?}",
+            tx_id
+        );
+
+        // 2G) Submit the transaction to the network.
+        let _ = client.submit_transaction(tx_result).await;
+
+        // Wait a bit for the network to process the transaction, then re-sync.
+        client.sync_state().await.unwrap();
+
+        // 2H) Retrieve the updated contract data and observe the incremented counter.
+        let (account, _data) = client.get_account(counter_contract.id()).await.unwrap();
+        println!("storage item 0: {:?}", account.storage().get_item(0));
+    }
+
+    Ok(())
+}
