@@ -29,12 +29,15 @@ pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {
     // Default values for store and rpc config
     let store_config = SqliteStoreConfig::default();
 
-     let endpoint = Endpoint::new("http".to_string(), "18.203.155.106".to_string(), 57291);
+    /*
+    // Testnet:
+    let endpoint = Endpoint::new("http".to_string(), "18.203.155.106".to_string(), 57291);
     let rpc_config = RpcConfig {
         endpoint,
         timeout_ms: 10000,
-    }; 
-    // let rpc_config = RpcConfig::default();
+    };  */
+    // Localhost:
+    let rpc_config = RpcConfig::default();
 
     // Create an SQLite store
     let store = SqliteStore::new(&store_config)

@@ -1,6 +1,5 @@
 ## Miden Tx 
 
-
 Running the script:
 
 ```
