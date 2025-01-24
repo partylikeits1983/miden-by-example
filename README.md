@@ -5,4 +5,4 @@ Running the script:
 
 ```
 cargo run --release
-```# miden-tx
+```
