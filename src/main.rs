@@ -3,71 +3,58 @@ use std::{fs, path::Path, sync::Arc};
 use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
-use tokio::time::Duration;
 
 use miden_client::{
-    accounts::{Account, AccountData, AccountStorageMode, AccountType},
-    config::{Endpoint, RpcConfig},
+    account::{AccountStorageMode, AccountType},
     crypto::RpoRandomCoin,
+    rpc::Endpoint,
     rpc::TonicRpcClient,
-    store::{
-        sqlite_store::{config::SqliteStoreConfig, SqliteStore},
-        StoreAuthenticator,
-    },
-    transactions::{LocalTransactionProver, ProvingOptions, TransactionKernel, TransactionRequest},
+    store::{sqlite_store::SqliteStore, StoreAuthenticator},
+    transaction::{TransactionKernel, TransactionRequestBuilder},
     Client, ClientError, Felt,
 };
 
 use miden_objects::{
-    accounts::{AccountBuilder, AccountComponent, AuthSecretKey, StorageSlot},
+    account::{AccountBuilder, AccountComponent, AuthSecretKey, StorageSlot},
     assembly::Assembler,
     crypto::{dsa::rpo_falcon512::SecretKey, hash::rpo::RpoDigest},
     Word,
 };
 
 pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {
-    // Default values for store and rpc config
-    let store_config = SqliteStoreConfig::default();
+    // Load default store and RPC config, or replace this with actual config loading
+    let store_path = "store.sqlite3";
 
-    /*
-    // Testnet:
-    let endpoint = Endpoint::new("http".to_string(), "18.203.155.106".to_string(), 57291);
-    let rpc_config = RpcConfig {
-        endpoint,
-        timeout_ms: 10000,
-    };  */
-    // Localhost:
-    let rpc_config = RpcConfig::default();
+    let endpoint = Endpoint::new("http".to_string(), "localhost".to_string(), Some(57291));
+    let timeout_ms = 10_000;
 
-    // Create an SQLite store
-    let store = SqliteStore::new(&store_config)
+    // Create the SQLite store
+    let store = SqliteStore::new(store_path.into())
         .await
         .map_err(ClientError::StoreError)?;
+
     let arc_store = Arc::new(store);
 
-    // Seed both random coin instances
+    // Seed the RNG
     let mut seed_rng = rand::thread_rng();
     let coin_seed: [u64; 4] = seed_rng.gen();
-    let rng_for_auth = RpoRandomCoin::new(coin_seed.map(Felt::new));
-    let rng_for_client = RpoRandomCoin::new(coin_seed.map(Felt::new));
 
-    // Create an authenticator that references the store
-    let authenticator = StoreAuthenticator::new_with_rng(arc_store.clone(), rng_for_auth);
+    // Create the random coin instance
+    let rng = RpoRandomCoin::new(coin_seed.map(Felt::new));
 
-    // Local prover (you could swap out for delegated proving)
-    let tx_prover = LocalTransactionProver::new(ProvingOptions::default());
+    // Create the authenticator referencing the same store and RNG
+    let authenticator = StoreAuthenticator::new_with_rng(arc_store.clone(), rng.clone());
 
     // Build the RPC client
-    let rpc_client = Box::new(TonicRpcClient::new(&rpc_config));
+    let rpc_client = Box::new(TonicRpcClient::new(endpoint, timeout_ms));
 
-    // Finally create the client
+    // Finally, instantiate the client. The `in_debug_mode` value can be toggled as needed.
     let client = Client::new(
         rpc_client,
-        rng_for_client,
+        rng,
         arc_store,
         Arc::new(authenticator),
-        Arc::new(tx_prover),
-        true,
+        /* in_debug_mode = */ true,
     );
 
     Ok(client)
@@ -88,25 +75,6 @@ pub fn get_new_pk_and_authenticator() -> (Word, AuthSecretKey) {
     let auth_secret_key = AuthSecretKey::RpoFalcon512(sec_key);
 
     (pub_key, auth_secret_key)
-}
-
-pub fn create_new_account(
-    account_component: AccountComponent,
-) -> (Account, Option<Word>, AuthSecretKey) {
-    // Generate a new public/secret keypair (Falcon-512).
-    let (_pub_key, auth_secret_key) = get_new_pk_and_authenticator();
-
-    // Build a new `Account` using the provided component plus the Falcon-512 verifier.
-    // Uses a random seed for the account’s RNG.
-    let (account, seed) = AccountBuilder::new()
-        .init_seed(ChaCha20Rng::from_entropy().gen()) // random seed
-        .account_type(AccountType::RegularAccountImmutableCode) // account type
-        .storage_mode(AccountStorageMode::Public) // storage mode
-        .with_component(account_component) // main contract logic
-        .build()
-        .unwrap();
-
-    (account, Some(seed), auth_secret_key)
 }
 
 #[tokio::main]
@@ -144,7 +112,24 @@ async fn main() -> Result<(), ClientError> {
     .with_supports_all_types();
 
     // 1D) Build a new account for the counter contract, retrieve the account, seed, and secret key.
-    let (counter_contract, counter_seed, auth_secret_key) = create_new_account(account_component);
+    // let (counter_contract, counter_seed, auth_secret_key) = create_new_account(account_component);
+
+    let (_counter_pub_key, auth_secret_key) = get_new_pk_and_authenticator();
+
+    // let mut init_seed = [0u8; 32];
+    let init_seed = ChaCha20Rng::from_entropy().gen();
+
+    let anchor_block = client.get_latest_epoch_block().await.unwrap();
+
+    // Build a new `Account` using the provided component plus the Falcon-512 verifier.
+    // Uses a random seed for the account’s RNG.
+    let (counter_contract, counter_seed) = AccountBuilder::new(init_seed)
+        .anchor((&anchor_block).try_into().unwrap())
+        .account_type(AccountType::RegularAccountImmutableCode) // account type
+        .storage_mode(AccountStorageMode::Public) // storage mode
+        .with_component(account_component) // main contract logic
+        .build()
+        .unwrap();
 
     println!(
         "counter_contract hash: {:?}",
@@ -152,15 +137,13 @@ async fn main() -> Result<(), ClientError> {
     );
     println!("contract id: {:?}", counter_contract.id().to_hex());
 
-    // 1E) Wrap the contract into `AccountData` with its seed and secret key, then import into the client.
-    let counter_contract_account_data = AccountData::new(
-        counter_contract.clone(),
-        counter_seed,
-        auth_secret_key.clone(),
-    );
-
     client
-        .import_account(counter_contract_account_data)
+        .add_account(
+            &counter_contract.clone(),
+            Some(counter_seed),
+            &auth_secret_key,
+            false,
+        )
         .await
         .unwrap();
 
@@ -177,9 +160,9 @@ async fn main() -> Result<(), ClientError> {
     // -------------------------------------------------------------------------
     println!("\n[STEP 2] Call Counter Contract With Script");
 
-    client.sync_state().await.unwrap();
-
     for _i in 0..100 {
+        client.sync_state().await.unwrap();
+
         // 2A) Grab the compiled procedure hash (in this case, the first procedure).
         let procedure_2_hash = procedures_vec[0].to_hex();
         let procedure_call = format!("{}", procedure_2_hash);
@@ -196,9 +179,10 @@ async fn main() -> Result<(), ClientError> {
         let tx_script = client.compile_tx_script(vec![], &replaced_code).unwrap();
 
         // 2E) Build a transaction request using the custom script.
-        let tx_increment_request = TransactionRequest::new()
+        let tx_increment_request = TransactionRequestBuilder::new()
             .with_custom_script(tx_script)
-            .unwrap();
+            .unwrap()
+            .build();
 
         // 2F) Execute the transaction locally (producing a result).
         let tx_result = client
@@ -219,9 +203,11 @@ async fn main() -> Result<(), ClientError> {
         client.sync_state().await.unwrap();
 
         // 2H) Retrieve the updated contract data and observe the incremented counter.
-        let (account, _data) = client.get_account(counter_contract.id()).await.unwrap();
-        println!("storage item 0: {:?}", account.storage().get_item(0));
+        let account = client.get_account(counter_contract.id()).await.unwrap();
+        println!(
+            "storage item 0: {:?}",
+            account.unwrap().account().storage().get_item(0)
+        );
     }
-
     Ok(())
 }
