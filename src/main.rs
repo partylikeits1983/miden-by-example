@@ -25,7 +25,12 @@ pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {
     // Load default store and RPC config, or replace this with actual config loading
     let store_path = "store.sqlite3";
 
-    let endpoint = Endpoint::new("http".to_string(), "localhost".to_string(), Some(57291));
+    // https://rpc.devnet.miden.io:443
+    let endpoint = Endpoint::new(
+        "https".to_string(),
+        "rpc.devnet.miden.io".to_string(),
+        Some(443),
+    );
     let timeout_ms = 10_000;
 
     // Create the SQLite store
@@ -54,7 +59,7 @@ pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {
         rng,
         arc_store,
         Arc::new(authenticator),
-        /* in_debug_mode = */ true,
+        /* in_debug_mode = */ false,
     );
 
     Ok(client)
@@ -115,6 +120,7 @@ async fn main() -> Result<(), ClientError> {
     // let (counter_contract, counter_seed, auth_secret_key) = create_new_account(account_component);
 
     let (_counter_pub_key, auth_secret_key) = get_new_pk_and_authenticator();
+    let (_counter_pub_key_1, _auth_secret_key_1) = get_new_pk_and_authenticator();
 
     // let mut init_seed = [0u8; 32];
     let init_seed = ChaCha20Rng::from_entropy().gen();
@@ -141,7 +147,7 @@ async fn main() -> Result<(), ClientError> {
         .add_account(
             &counter_contract.clone(),
             Some(counter_seed),
-            &auth_secret_key,
+            &_auth_secret_key_1,
             false,
         )
         .await
@@ -160,7 +166,7 @@ async fn main() -> Result<(), ClientError> {
     // -------------------------------------------------------------------------
     println!("\n[STEP 2] Call Counter Contract With Script");
 
-    for _i in 0..100 {
+    for _i in 0..1000 {
         client.sync_state().await.unwrap();
 
         // 2A) Grab the compiled procedure hash (in this case, the first procedure).
@@ -173,7 +179,7 @@ async fn main() -> Result<(), ClientError> {
 
         // 2C) Replace the placeholder `{increment_count}` in the script with the actual procedure call.
         let replaced_code = original_code.replace("{increment_count}", &procedure_call);
-        println!("Final script:\n{}", replaced_code);
+        // println!("Final script:\n{}", replaced_code);
 
         // 2D) Compile the script (which now references our procedure).
         let tx_script = client.compile_tx_script(vec![], &replaced_code).unwrap();
@@ -191,10 +197,10 @@ async fn main() -> Result<(), ClientError> {
             .unwrap();
 
         let tx_id = tx_result.executed_transaction().id();
-        println!(
+        /*         println!(
             "View transaction on MidenScan: https://testnet.midenscan.com/tx/{:?}",
             tx_id
-        );
+        ); */
 
         // 2G) Submit the transaction to the network.
         let _ = client.submit_transaction(tx_result).await;
