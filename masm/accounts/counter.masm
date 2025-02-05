@@ -7,6 +7,9 @@ export.get_count
     
     # => [index]
     exec.account::get_item
+
+    exec.sys::truncate_stack
+
 end
 
 export.increment_count

@@ -1,0 +1,4 @@
+begin
+    # => []
+    call.{copy_count}
+end

@@ -126,12 +126,7 @@ async fn main() -> Result<(), ClientError> {
         .build()
         .unwrap();
 
-    println!(
-        "counter_contract hash: {:?}",
-        counter_contract.hash().to_hex()
-    );
     println!("contract id: {:?}", counter_contract.id().to_hex());
-
     println!("account_storage: {:?}", counter_contract.storage());
 
     // Since the counter contract is public and does sign any transactions, auth_secret_key is not required.
@@ -168,6 +163,26 @@ async fn main() -> Result<(), ClientError> {
         .to_hex();
 
     println!("increment_count procedure root: {:?}", increment_count_root);
+
+    // Print the procedure root hash
+    let get_count_export = counter_component
+        .library()
+        .exports()
+        .find(|export| export.name.as_str() == "get_count")
+        .unwrap();
+
+    let get_count_mast_id = counter_component
+        .library()
+        .get_export_node_id(get_count_export);
+
+    let get_count_root = counter_component
+        .library()
+        .mast_forest()
+        .get_node_by_id(get_count_mast_id)
+        .unwrap()
+        .digest()
+        .to_hex();
+    println!("get_count procedure root: {:?}", get_count_root);
 
     // -------------------------------------------------------------------------
     // STEP 2: Call the Counter Contract with a script

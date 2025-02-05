@@ -1,0 +1,25 @@
+use.miden::account
+use.miden::tx
+use.std::sys
+
+export.copy_count
+
+  # => []
+  push.{get_count_proc_root}
+
+  # => [GET_COUNT_ROOT]
+  push.{account_id_suffix}
+
+  push.{account_id_prefix}
+
+  debug.stack
+
+  # => [account_id, GET_COUNT_ROOT]
+  exec.tx::execute_foreign_procedure
+
+  # => [count]
+  debug.stack
+
+  exec.sys::truncate_stack
+
+end
