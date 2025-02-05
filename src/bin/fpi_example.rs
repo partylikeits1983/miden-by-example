@@ -22,7 +22,7 @@ use miden_objects::{
     account::{AccountBuilder, AccountComponent, AccountStorage, AuthSecretKey, StorageSlot},
     assembly::Assembler,
     crypto::dsa::rpo_falcon512::SecretKey,
-    Digest, Word,
+    Word,
 };
 
 pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {

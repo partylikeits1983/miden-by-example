@@ -10,11 +10,10 @@ export.copy_count
   # => [GET_COUNT_ROOT]
   push.{account_id_suffix}
 
+  # => [account_id_suffix]
   push.{account_id_prefix}
 
-  debug.stack
-
-  # => [account_id, GET_COUNT_ROOT]
+  # => [account_id_prefix, account_id_suffix, GET_COUNT_ROOT]
   exec.tx::execute_foreign_procedure
 
   # => [count]
