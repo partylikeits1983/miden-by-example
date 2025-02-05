@@ -92,7 +92,7 @@ async fn main() -> Result<(), ClientError> {
     println!("\n[STEP 1] Building counter contract from public state");
 
     // Define the Counter Contract account id from counter contract deploy
-    let counter_contract_id = AccountId::from_hex("0xa5fccfdd807faa000001f9cea5b27d").unwrap();
+    let counter_contract_id = AccountId::from_hex("0xbf7296a093126b000001acf316698d").unwrap();
 
     let account_details = client
         .test_rpc_api()

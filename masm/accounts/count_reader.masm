@@ -3,7 +3,6 @@ use.miden::tx
 use.std::sys
 
 export.copy_count
-
   # => []
   push.{get_count_proc_root}
 
@@ -19,6 +18,15 @@ export.copy_count
   # => [count]
   debug.stack
 
-  exec.sys::truncate_stack
+  # => [count]
+  push.0 
 
+  # [index, count+1]
+  exec.account::set_item
+
+  # => []
+  push.1 exec.account::incr_nonce
+
+  # => []
+  exec.sys::truncate_stack
 end

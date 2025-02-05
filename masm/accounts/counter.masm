@@ -10,7 +10,6 @@ export.get_count
 
     # => [count]
     exec.sys::truncate_stack
-
 end
 
 export.increment_count

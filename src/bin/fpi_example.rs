@@ -99,7 +99,7 @@ async fn main() -> Result<(), ClientError> {
     let raw_account_code = fs::read_to_string(file_path).unwrap();
 
     // Define the Counter Contract account id from counter contract deploy
-    let counter_contract_id = AccountId::from_hex("0x05a4e16cfd9bd2000001a4bdfe5066").unwrap();
+    let counter_contract_id = AccountId::from_hex("0xbf7296a093126b000001acf316698d").unwrap();
     let get_count_root = "0x92495ca54d519eb5e4ba22350f837904d3895e48d74d8079450f19574bb84cb6";
 
     let account_code = raw_account_code
@@ -112,8 +112,6 @@ async fn main() -> Result<(), ClientError> {
             "{account_id_suffix}",
             &counter_contract_id.suffix().to_string(),
         );
-
-    // println!("Final acount code:\n{}", account_code);
 
     // Prepare assembler (debug mode = true)
     let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
@@ -190,6 +188,9 @@ async fn main() -> Result<(), ClientError> {
     // -------------------------------------------------------------------------
     println!("\n[STEP 2] Building counter contract from public state");
 
+    // Define the Counter Contract account id from counter contract deploy
+    let counter_contract_id = AccountId::from_hex("0xbf7296a093126b000001acf316698d").unwrap();
+
     let account_details = client
         .test_rpc_api()
         .get_account_update(counter_contract_id)
@@ -246,6 +247,15 @@ async fn main() -> Result<(), ClientError> {
         counter_nonce,
     );
 
+    // Since the counter contract is public and does sign any transactions, auth_secret_key is not required.
+    // However, to import to the client, we must generate a random value.
+    let (_, _auth_secret_key) = get_new_pk_and_authenticator();
+
+    client
+        .add_account(&counter_contract.clone(), None, &_auth_secret_key, true)
+        .await
+        .unwrap();
+
     // -------------------------------------------------------------------------
     // STEP 3: Call the Counter Contract via FPI
     // -------------------------------------------------------------------------
@@ -263,7 +273,7 @@ async fn main() -> Result<(), ClientError> {
 
     let foreign_account =
         ForeignAccount::public(counter_contract_id, AccountStorageRequirements::default()).unwrap();
-    // let foreign_account = ForeignAccount::public(counter_contract_id, AccountStorageRequirements::default()).unwrap();
+    // let foreign_account = ForeignAccount::public(counter_contract_id, AccountStorageRequirements::new([(0u8, &[Digest::default()])])).unwrap();
 
     // Build a transaction request with the custom script
     let tx_request = TransactionRequestBuilder::new()
