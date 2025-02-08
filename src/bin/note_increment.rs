@@ -1,17 +1,25 @@
 use std::{fs, path::Path, sync::Arc};
 
+use miden_crypto::rand::FeltRng;
 use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use tokio::time::Duration;
 
 use miden_client::{
-    account::{Account, AccountCode, AccountId, AccountType},
+    account::{
+        component::{BasicWallet, RpoFalcon512},
+        Account, AccountBuilder, AccountCode, AccountId, AccountStorageMode, AccountType,
+    },
     asset::AssetVault,
     crypto::RpoRandomCoin,
+    note::{
+        Note, NoteAssets, NoteExecutionHint, NoteExecutionMode, NoteInputs, NoteMetadata,
+        NoteRecipient, NoteScript, NoteTag, NoteType,
+    },
     rpc::{domain::account::AccountDetails, Endpoint, TonicRpcClient},
     store::{sqlite_store::SqliteStore, StoreAuthenticator},
-    transaction::{TransactionKernel, TransactionRequestBuilder},
+    transaction::{OutputNote, TransactionKernel, TransactionRequestBuilder},
     Client, ClientError, Felt,
 };
 
@@ -83,8 +91,45 @@ async fn main() -> Result<(), ClientError> {
     let sync_summary = client.sync_state().await.unwrap();
     println!("Latest block: {}", sync_summary.block_num);
 
+    //------------------------------------------------------------
+    // STEP 1: Create a basic account for Voter
+    //------------------------------------------------------------
+    println!("\n[STEP 1] Creating a new account for Alice");
+
+    // Account seed
+    let mut init_seed = [0u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+
+    // Generate key pair
+    let key_pair = SecretKey::with_rng(client.rng());
+
+    // Anchor block
+    let anchor_block = client.get_latest_epoch_block().await.unwrap();
+
+    // Build the account
+    let builder = AccountBuilder::new(init_seed)
+        .anchor((&anchor_block).try_into().unwrap())
+        .account_type(AccountType::RegularAccountUpdatableCode)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(RpoFalcon512::new(key_pair.public_key()))
+        .with_component(BasicWallet);
+
+    let (alice_account, seed) = builder.build().unwrap();
+
+    // Add the account to the client
+    client
+        .add_account(
+            &alice_account,
+            Some(seed),
+            &AuthSecretKey::RpoFalcon512(key_pair),
+            false,
+        )
+        .await?;
+
+    println!("Alice's account ID: {:?}", alice_account.id().to_hex());
+
     // -------------------------------------------------------------------------
-    // STEP 1: Build Counter Contract From Public State
+    // STEP 2: Build Counter Contract From Public State
     // -------------------------------------------------------------------------
     println!("\n[STEP 1] Building counter contract from public state");
 
@@ -118,7 +163,7 @@ async fn main() -> Result<(), ClientError> {
     // Compile the account code into `AccountComponent` with the count value returned by the node
     let counter_component = AccountComponent::compile(
         account_code,
-        assembler,
+        assembler.clone(),
         vec![StorageSlot::Value(count_value.value())],
     )
     .unwrap()
@@ -157,7 +202,7 @@ async fn main() -> Result<(), ClientError> {
         .unwrap();
 
     // -------------------------------------------------------------------------
-    // STEP 2: Call the Counter Contract with a script
+    // STEP 3: Create counter contract increment NOTE using voter account
     // -------------------------------------------------------------------------
     println!("\n[STEP 2] Call the increment_count procedure in the counter contract");
 
@@ -168,16 +213,6 @@ async fn main() -> Result<(), ClientError> {
         println!("Procedure {}: {:?}", index + 1, procedure.to_hex());
     }
     println!("number of procedures: {}", procedures_vec.len());
-
-    /*
-    let names = counter_component.library().exports();
-    println!("names: {:?}", names);
-
-    let names_vec: Vec<QualifiedProcedureName> = names.collect();
-    for(index, procedure) in names.iter().enumerate() {
-      println!("names: {:?}", procedure);
-    }
-    */
 
     let get_increment_export = counter_component
         .library()
@@ -198,25 +233,48 @@ async fn main() -> Result<(), ClientError> {
         .to_hex();
 
     // Load the MASM script referencing the increment procedure
-    let file_path = Path::new("./masm/scripts/counter_script.masm");
+    let file_path = Path::new("./masm/notes/increment_note.masm");
     let original_code = fs::read_to_string(file_path).unwrap();
 
     // Replace the placeholder with the actual procedure call
     let replaced_code = original_code.replace("{increment_count}", &increment_count_root);
     println!("Final script:\n{}", replaced_code);
 
-    // Compile the script
-    let tx_script = client.compile_tx_script(vec![], &replaced_code).unwrap();
+    let rng = client.rng();
+    let serial_num = rng.draw_word();
+    let note_script = NoteScript::compile(replaced_code, assembler).unwrap();
+    let note_inputs = NoteInputs::new(vec![]).unwrap();
+
+    let recipient = NoteRecipient::new(serial_num, note_script, note_inputs);
+    let tag = NoteTag::for_public_use_case(0, 0, NoteExecutionMode::Network).unwrap();
+
+    let aux = Felt::new(0);
+    let metadata = NoteMetadata::new(
+        alice_account.id(),
+        NoteType::Public,
+        tag,
+        NoteExecutionHint::always(),
+        aux,
+    )?;
+    let vault = NoteAssets::new(vec![])?;
+
+    // Building note
+    let increment_note = Note::new(vault, metadata, recipient);
+    println!("note has: {:?}", increment_note.hash());
+
+    let output_note = OutputNote::Full(increment_note.clone());
 
     // Build a transaction request with the custom script
-    let tx_increment_request = TransactionRequestBuilder::new()
-        .with_custom_script(tx_script)
+
+    let incr_note_create_request = TransactionRequestBuilder::new()
+        // .with_expected_output_notes([vote_note].to_vec())
+        .with_own_output_notes([output_note].to_vec())
         .unwrap()
         .build();
 
     // Execute the transaction locally
     let tx_result = client
-        .new_transaction(counter_contract.id(), tx_increment_request)
+        .new_transaction(alice_account.id(), incr_note_create_request)
         .await
         .unwrap();
 
@@ -230,15 +288,43 @@ async fn main() -> Result<(), ClientError> {
     let _ = client.submit_transaction(tx_result).await;
 
     // Wait, then re-sync
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    println!("waiting 10 seconds");
+    tokio::time::sleep(Duration::from_secs(10)).await;
     client.sync_state().await.unwrap();
 
-    // Retrieve updated contract data to see the incremented counter
+    // -------------------------------------------------------------------------
+    // STEP 4: Consume Increment Note with Counter Contract
+    // -------------------------------------------------------------------------
+
+    let tx_note_consume_request = TransactionRequestBuilder::new()
+        .with_authenticated_input_notes([(increment_note.id(), Some(Word::default()))])
+        .build();
+
+    // Execute the transaction locally
+    let tx_result = client
+        .new_transaction(counter_contract.id(), tx_note_consume_request)
+        .await
+        .unwrap();
+
+    let tx_id = tx_result.executed_transaction().id();
+    println!(
+        "Consumed Note Tx on MidenScan: https://testnet.midenscan.com/tx/{:?}",
+        tx_id
+    );
+
+    // Submit transaction to the network
+    let _ = client.submit_transaction(tx_result).await;
+    println!("waiting 10 seconds");
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    client.sync_state().await.unwrap();
+
+    // Wait, then re-sync
+    /*     // Retrieve updated contract data to see the incremented counter
     let account = client.get_account(counter_contract.id()).await.unwrap();
     println!(
         "counter contract storage: {:?}",
         account.unwrap().account().storage().get_item(0)
-    );
+    ); */
 
     Ok(())
 }

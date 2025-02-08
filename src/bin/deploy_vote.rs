@@ -98,18 +98,22 @@ async fn main() -> Result<(), ClientError> {
     // Prepare assembler (debug mode = true)
     let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
 
-    // let storage: StorageSlot = vec![];
+    let mut storage: Vec<StorageSlot> = Vec::new();
 
-    // Compile the account code into `AccountComponent` with one storage slot
-    let contract_component = AccountComponent::compile(
-        account_code,
-        assembler,
-        vec![
-            StorageSlot::Value(Word::default()),
-        ],
-    )
-    .unwrap()
-    .with_supports_all_types();
+    // Push 128 default storage slots into the vector
+    for _ in 0..1 {
+        storage.push(StorageSlot::Value([
+            Felt::new(1), // against count
+            Felt::new(0), // for count
+            Felt::new(1), // num of votes
+            Felt::new(0), // election_id
+        ]));
+    }
+
+    // Compile the account code into `AccountComponent` with the storage slots
+    let contract_component = AccountComponent::compile(account_code, assembler, storage)
+        .unwrap()
+        .with_supports_all_types();
 
     // Init seed for the counter contract
     let init_seed = ChaCha20Rng::from_entropy().gen();
@@ -131,7 +135,7 @@ async fn main() -> Result<(), ClientError> {
         .unwrap();
 
     println!("contract id: {:?}", voting_contract.id().to_hex());
-    println!("account_storage: {:?}", voting_contract.storage());
+    println!("account_storage: {:?}", voting_contract.storage().slots());
 
     // Since the counter contract is public and does sign any transactions, auth_secret_key is not required.
     // However, to import to the client, we must generate a random value.
@@ -203,16 +207,16 @@ async fn main() -> Result<(), ClientError> {
 
     // Compile the script referencing our procedure
     let tx_script = client.compile_tx_script(vec![], &replaced_code).unwrap();
-    /*
-    let tx_script = client
-        .compile_tx_script(
-            vec![(
-                [Felt::new(1), Felt::new(1), Felt::new(0), Felt::new(0)],
-                vec![Felt::new(1), Felt::new(1), Felt::new(0), Felt::new(0)],
-            )],
-            &replaced_code,
-        )
-        .unwrap();
+
+    /*     let tx_script = client
+       .compile_tx_script(
+           vec![(
+               [Felt::new(1), Felt::new(1), Felt::new(0), Felt::new(0)],
+               vec![Felt::new(1), Felt::new(1), Felt::new(0), Felt::new(0)],
+           )],
+           &replaced_code,
+       )
+       .unwrap();
     */
 
     // Build a transaction request with the custom script
@@ -244,7 +248,7 @@ async fn main() -> Result<(), ClientError> {
     let account = client.get_account(voting_contract.id()).await.unwrap();
     println!(
         "counter contract storage: {:?}",
-        account.unwrap().account().storage().get_item(0)
+        account.unwrap().account().storage()
     );
 
     Ok(())

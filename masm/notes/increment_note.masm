@@ -1,3 +1,9 @@
 begin
 
+    push.10103 debug.stack drop
+
+    call.{increment_count}
+
+    push.9999 debug.stack drop
+
 end
