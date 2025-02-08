@@ -1,0 +1,69 @@
+use.miden::account
+use.std::sys
+
+# MEMORY LAYOUT
+# 0 - ELECTION_ID
+# 1 - NUMBER OF VOTES
+# 2 - FOR COUNT
+# 3 - AGAINST COUNT
+
+proc.only_owner
+  push.101 debug.stack drop
+  # exec.::miden::contracts::auth::basic::auth_tx_rpo_falcon512
+end
+
+proc.is_voter
+  push.1
+end
+
+export.create_vote
+  # push.111 debug.stack drop
+  call.only_owner
+
+  push.0 exec.account::get_item push.1 add
+  push.0 exec.account::set_item
+
+  exec.sys::truncate_stack
+end
+
+# 0 for "FOR" 1 for "AGAINST"
+# => [vote]
+export.vote
+
+  # => [vote]
+  push.0 exec.account::get_item
+
+  # => [election_id, number_of_votes, for_count, against_count, vote]
+  push.101 debug.stack drop
+
+  if.true
+    push.111 debug.stack drop
+  else 
+    push.222 debug.stack drop
+  end
+
+  # STACK STATE:
+  # => [election_id, number_of_votes, for_count, against_count]
+
+  push.333 debug.stack drop 
+
+  # increment NUMBER OF VOTES
+  push.0 exec.account::get_item push.1 add
+  push.0 exec.account::set_item
+
+  debug.stack
+
+  # increment nonce
+  push.1 exec.account::incr_nonce
+
+  exec.sys::truncate_stack
+
+  drop
+
+end
+
+export.add_voter
+  # call.only_owner
+  push.2
+end
+

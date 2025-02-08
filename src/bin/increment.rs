@@ -16,7 +16,7 @@ use miden_client::{
 };
 
 use miden_objects::{
-    account::{AccountComponent, AccountStorage, AuthSecretKey, StorageSlot},
+    account::{code::procedure, AccountComponent, AccountStorage, AuthSecretKey, StorageSlot},
     assembly::Assembler,
     crypto::{dsa::rpo_falcon512::SecretKey, hash::rpo::RpoDigest},
     Word,
@@ -24,11 +24,8 @@ use miden_objects::{
 
 pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {
     // RPC endpoint and timeout
-    let endpoint = Endpoint::new(
-        "https".to_string(),
-        "rpc.testnet.miden.io".to_string(),
-        Some(443),
-    );
+    let endpoint = Endpoint::new("http".to_string(), "localhost".to_string(), Some(57291));
+
     let timeout_ms = 10_000;
 
     // Build RPC client
@@ -92,7 +89,7 @@ async fn main() -> Result<(), ClientError> {
     println!("\n[STEP 1] Building counter contract from public state");
 
     // Define the Counter Contract account id from counter contract deploy
-    let counter_contract_id = AccountId::from_hex("0xbf7296a093126b000001acf316698d").unwrap();
+    let counter_contract_id = AccountId::from_hex("0x75baa4b7102b3500000014ac242f7d").unwrap();
 
     let account_details = client
         .test_rpc_api()
@@ -171,6 +168,16 @@ async fn main() -> Result<(), ClientError> {
         println!("Procedure {}: {:?}", index + 1, procedure.to_hex());
     }
     println!("number of procedures: {}", procedures_vec.len());
+
+    /*
+    let names = counter_component.library().exports();
+    println!("names: {:?}", names);
+
+    let names_vec: Vec<QualifiedProcedureName> = names.collect();
+    for(index, procedure) in names.iter().enumerate() {
+      println!("names: {:?}", procedure);
+    }
+    */
 
     let get_increment_export = counter_component
         .library()

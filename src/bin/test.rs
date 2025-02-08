@@ -95,7 +95,7 @@ async fn main() -> Result<(), ClientError> {
     let raw_account_code = fs::read_to_string(file_path).unwrap();
 
     // Define the counter contract account id and `get_count` procedure root hash
-    let counter_contract_id = AccountId::from_hex("0x6d29b824c8fc78000000c0b382a675").unwrap();
+    let counter_contract_id = AccountId::from_hex("0xa564b4af5088e0000000b3ca99dfea").unwrap();
     let get_count_root = "0x92495ca54d519eb5e4ba22350f837904d3895e48d74d8079450f19574bb84cb6";
 
     let count_reader_code = raw_account_code
@@ -179,128 +179,5 @@ async fn main() -> Result<(), ClientError> {
         .to_hex();
 
     println!("copy_count procedure root: {:?}", copy_count_proc_root);
-
-    // -------------------------------------------------------------------------
-    // STEP 2: Build & Get State of the Counter Contract
-    // -------------------------------------------------------------------------
-    println!("\n[STEP 2] Building counter contract from public state");
-
-    // Define the Counter Contract account id from counter contract deploy
-    let account_details = client
-        .test_rpc_api()
-        .get_account_update(counter_contract_id)
-        .await
-        .unwrap();
-
-    let AccountDetails::Public(counter_contract_details, _) = account_details else {
-        panic!("counter contract must be public");
-    };
-
-    // Getting the value of the count from slot 0 and the nonce of the counter contract
-    let count_value = counter_contract_details.storage().slots().get(0).unwrap();
-    let counter_nonce = counter_contract_details.nonce();
-
-    println!("count val: {:?}", count_value.value());
-    println!("counter nonce: {:?}", counter_nonce);
-
-    // Load the MASM file for the counter contract
-    let file_path = Path::new("./masm/accounts/counter.masm");
-    let account_code = fs::read_to_string(file_path).unwrap();
-
-    // Prepare assembler (debug mode = true)
-    let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
-
-    // Compile the account code into `AccountComponent` with the count value returned by the node
-    let counter_component = AccountComponent::compile(
-        account_code,
-        assembler,
-        vec![StorageSlot::Value(count_value.value())],
-    )
-    .unwrap()
-    .with_supports_all_types();
-
-    // Initialize the AccountStorage with the count value returned by the node
-    let counter_storage =
-        AccountStorage::new(vec![StorageSlot::Value(count_value.value())]).unwrap();
-
-    // Build AccountCode from components
-    let counter_code = AccountCode::from_components(
-        &[counter_component.clone()],
-        AccountType::RegularAccountImmutableCode,
-    )
-    .unwrap();
-
-    // The counter contract doesn't have any assets so we pass an empty vector
-    let vault = AssetVault::new(&[]).unwrap();
-
-    // Build the counter contract from parts
-    let counter_contract = Account::from_parts(
-        counter_contract_id,
-        vault,
-        counter_storage,
-        counter_code,
-        counter_nonce,
-    );
-
-    // Since the counter contract is public and does sign any transactions, auth_secret_key is not required.
-    // However, to import to the client, we must generate a random value.
-    let (_, auth_secret_key) = get_new_pk_and_authenticator();
-
-    client
-        .add_account(&counter_contract.clone(), None, &auth_secret_key, true)
-        .await
-        .unwrap();
-
-    // -------------------------------------------------------------------------
-    // STEP 3: Call the Counter Contract via Foreign Procedure Invocation (FPI)
-    // -------------------------------------------------------------------------
-    println!("\n[STEP 3] Call Counter Contract with FPI from Count Copy Contract");
-
-    // Load the MASM script referencing the increment procedure
-    let file_path = Path::new("./masm/scripts/reader_script.masm");
-    let original_code = fs::read_to_string(file_path).unwrap();
-
-    // Replace {get_count} and {account_id}
-    let replaced_code = original_code.replace("{copy_count}", &copy_count_proc_root);
-
-    // Compile the script referencing our procedure
-    let tx_script = client.compile_tx_script(vec![], &replaced_code).unwrap();
-
-    let foreign_account =
-        ForeignAccount::public(counter_contract_id, AccountStorageRequirements::default()).unwrap();
-
-    // Build a transaction request with the custom script
-    let tx_request = TransactionRequestBuilder::new()
-        .with_foreign_accounts([foreign_account])
-        .with_custom_script(tx_script)
-        .unwrap()
-        .build();
-
-    // Execute the transaction locally
-    let tx_result = client
-        .new_transaction(count_reader_contract.id(), tx_request)
-        .await
-        .unwrap();
-
-    let tx_id = tx_result.executed_transaction().id();
-    println!(
-        "View transaction on MidenScan: https://testnet.midenscan.com/tx/{:?}",
-        tx_id
-    );
-
-    // Submit transaction to the network
-    let _ = client.submit_transaction(tx_result).await;
-
-    // Wait, then re-sync
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    client.sync_state().await.unwrap();
-
-    // Retrieve updated contract data to see the incremented counter
-    let account = client.get_account(counter_contract.id()).await.unwrap();
-    println!(
-        "counter contract storage: {:?}",
-        account.unwrap().account().storage().get_item(0)
-    );
-
     Ok(())
 }
