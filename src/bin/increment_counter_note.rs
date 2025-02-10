@@ -134,7 +134,7 @@ async fn main() -> Result<(), ClientError> {
     println!("\n[STEP 1] Building counter contract from public state");
 
     // Define the Counter Contract account id from counter contract deploy
-    let counter_contract_id = AccountId::from_hex("0x78d14dc610332f000000d711a45923").unwrap();
+    let counter_contract_id = AccountId::from_hex("0x207a2f5970d2ec000000d114025b02").unwrap();
 
     let account_details = client
         .test_rpc_api()
@@ -269,7 +269,7 @@ async fn main() -> Result<(), ClientError> {
 
     // Building note
     let increment_note = Note::new(vault, metadata, recipient);
-    println!("note has: {:?}", increment_note.hash());
+    println!("note hash: {:?}", increment_note.hash());
 
     let output_note = OutputNote::Full(increment_note.clone());
 
