@@ -1,0 +1,7 @@
+begin
+
+    call.{increment_count}
+
+    push.111 debug.stack drop
+
+end

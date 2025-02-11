@@ -6,7 +6,7 @@ use rand_chacha::ChaCha20Rng;
 use tokio::time::Duration;
 
 use miden_client::{
-    account::{AccountStorageMode, AccountType},
+    account::{component::RpoFalcon512, AccountStorageMode, AccountType},
     crypto::RpoRandomCoin,
     rpc::{Endpoint, TonicRpcClient},
     store::{sqlite_store::SqliteStore, StoreAuthenticator},
@@ -92,25 +92,28 @@ async fn main() -> Result<(), ClientError> {
     println!("\n[STEP 1] Creating counter contract.");
 
     // Load the MASM file for the counter contract
-    let file_path = Path::new("./masm/accounts/counter.masm");
+    let file_path = Path::new("./masm/accounts/voting_contract.masm");
     let account_code = fs::read_to_string(file_path).unwrap();
 
     // Prepare assembler (debug mode = true)
     let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
 
-    // Compile the account code into `AccountComponent` with one storage slot
-    let counter_component = AccountComponent::compile(
-        account_code,
-        assembler,
-        vec![StorageSlot::Value([
-            Felt::new(0),
-            Felt::new(0),
-            Felt::new(0),
-            Felt::new(0),
-        ])],
-    )
-    .unwrap()
-    .with_supports_all_types();
+    let mut storage: Vec<StorageSlot> = Vec::new();
+
+    // Push 128 default storage slots into the vector
+    for _ in 0..1 {
+        storage.push(StorageSlot::Value([
+            Felt::new(1), // against count
+            Felt::new(0), // for count
+            Felt::new(1), // num of votes
+            Felt::new(0), // election_id
+        ]));
+    }
+
+    // Compile the account code into `AccountComponent` with the storage slots
+    let contract_component = AccountComponent::compile(account_code, assembler, storage)
+        .unwrap()
+        .with_supports_all_types();
 
     // Init seed for the counter contract
     let init_seed = ChaCha20Rng::from_entropy().gen();
@@ -118,17 +121,21 @@ async fn main() -> Result<(), ClientError> {
     // Anchor block of the account
     let anchor_block = client.get_latest_epoch_block().await.unwrap();
 
+    // For only owner:
+    let key_pair = SecretKey::with_rng(client.rng());
+
     // Build the new `Account` with the component
-    let (counter_contract, counter_seed) = AccountBuilder::new(init_seed)
+    let (voting_contract, voting_seed) = AccountBuilder::new(init_seed)
         .anchor((&anchor_block).try_into().unwrap())
         .account_type(AccountType::RegularAccountImmutableCode)
         .storage_mode(AccountStorageMode::Public)
-        .with_component(counter_component.clone())
+        .with_component(contract_component.clone())
+        .with_component(RpoFalcon512::new(key_pair.public_key()))
         .build()
         .unwrap();
 
-    println!("contract id: {:?}", counter_contract.id().to_hex());
-    println!("account_storage: {:?}", counter_contract.storage());
+    println!("contract id: {:?}", voting_contract.id().to_hex());
+    println!("account_storage: {:?}", voting_contract.storage().slots());
 
     // Since the counter contract is public and does sign any transactions, auth_secret_key is not required.
     // However, to import to the client, we must generate a random value.
@@ -136,8 +143,8 @@ async fn main() -> Result<(), ClientError> {
 
     client
         .add_account(
-            &counter_contract.clone(),
-            Some(counter_seed),
+            &voting_contract.clone(),
+            Some(voting_seed),
             &auth_secret_key,
             false,
         )
@@ -145,17 +152,17 @@ async fn main() -> Result<(), ClientError> {
         .unwrap();
 
     // Print the procedure root hash
-    let get_increment_export = counter_component
+    let get_proc_export = contract_component
         .library()
         .exports()
-        .find(|export| export.name.as_str() == "increment_count")
+        .find(|export| export.name.as_str() == "create_vote")
         .unwrap();
 
-    let get_increment_count_mast_id = counter_component
+    let get_increment_count_mast_id = contract_component
         .library()
-        .get_export_node_id(get_increment_export);
+        .get_export_node_id(get_proc_export);
 
-    let increment_count_root = counter_component
+    let increment_count_root = contract_component
         .library()
         .mast_forest()
         .get_node_by_id(get_increment_count_mast_id)
@@ -163,27 +170,27 @@ async fn main() -> Result<(), ClientError> {
         .digest()
         .to_hex();
 
-    println!("increment_count procedure root: {:?}", increment_count_root);
+    println!("create_vote procedure root: {:?}", increment_count_root);
 
     // Print the procedure root hash
-    let get_count_export = counter_component
+    let get_vote_export = contract_component
         .library()
         .exports()
-        .find(|export| export.name.as_str() == "get_count")
+        .find(|export| export.name.as_str() == "vote")
         .unwrap();
 
-    let get_count_mast_id = counter_component
+    let get_vote_mast_id = contract_component
         .library()
-        .get_export_node_id(get_count_export);
+        .get_export_node_id(get_vote_export);
 
-    let get_count_root = counter_component
+    let vote_proc_root = contract_component
         .library()
         .mast_forest()
-        .get_node_by_id(get_count_mast_id)
+        .get_node_by_id(get_vote_mast_id)
         .unwrap()
         .digest()
         .to_hex();
-    println!("get_count procedure root: {:?}", get_count_root);
+    println!("vote procedure root: {:?}", vote_proc_root);
 
     // -------------------------------------------------------------------------
     // STEP 2: Call the Counter Contract with a script
@@ -191,25 +198,25 @@ async fn main() -> Result<(), ClientError> {
     println!("\n[STEP 2] Call Counter Contract With Script");
 
     // Load the MASM script referencing the increment procedure
-    let file_path = Path::new("./masm/scripts/counter_script.masm");
+    let file_path = Path::new("./masm/scripts/voting_script.masm");
     let original_code = fs::read_to_string(file_path).unwrap();
 
     // Replace the placeholder with the actual procedure call
-    let replaced_code = original_code.replace("{increment_count}", &increment_count_root);
+    let replaced_code = original_code.replace("{vote}", &vote_proc_root);
     println!("Final script:\n{}", replaced_code);
 
     // Compile the script referencing our procedure
     let tx_script = client.compile_tx_script(vec![], &replaced_code).unwrap();
-    /*
-    let tx_script = client
-        .compile_tx_script(
-            vec![(
-                [Felt::new(1), Felt::new(1), Felt::new(0), Felt::new(0)],
-                vec![Felt::new(1), Felt::new(1), Felt::new(0), Felt::new(0)],
-            )],
-            &replaced_code,
-        )
-        .unwrap();
+
+    /*     let tx_script = client
+       .compile_tx_script(
+           vec![(
+               [Felt::new(1), Felt::new(1), Felt::new(0), Felt::new(0)],
+               vec![Felt::new(1), Felt::new(1), Felt::new(0), Felt::new(0)],
+           )],
+           &replaced_code,
+       )
+       .unwrap();
     */
 
     // Build a transaction request with the custom script
@@ -220,7 +227,7 @@ async fn main() -> Result<(), ClientError> {
 
     // Execute the transaction locally
     let tx_result = client
-        .new_transaction(counter_contract.id(), tx_increment_request)
+        .new_transaction(voting_contract.id(), tx_increment_request)
         .await
         .unwrap();
 
@@ -238,10 +245,10 @@ async fn main() -> Result<(), ClientError> {
     client.sync_state().await.unwrap();
 
     // Retrieve updated contract data to see the incremented counter
-    let account = client.get_account(counter_contract.id()).await.unwrap();
+    let account = client.get_account(voting_contract.id()).await.unwrap();
     println!(
         "counter contract storage: {:?}",
-        account.unwrap().account().storage().get_item(0)
+        account.unwrap().account().storage()
     );
 
     Ok(())

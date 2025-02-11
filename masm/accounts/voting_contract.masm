@@ -1,0 +1,111 @@
+use.miden::account
+use.std::sys
+use.miden::note
+
+use.std::crypto::hashes::rpo
+
+# MEMORY LAYOUT
+# 0 - ELECTION_ID
+# 1 - NUMBER OF VOTES
+# 2 - FOR COUNT
+# 3 - AGAINST COUNT
+
+const.ELECTION_ID=0
+const.NUMBER_OF_VOTES=1
+const.FOR_COUNT=2
+const.AGAINST_COUNT=3
+
+proc.only_owner
+  push.101 debug.stack drop
+  # exec.::miden::contracts::auth::basic::auth_tx_rpo_falcon512
+end
+
+proc.is_voter
+  push.1
+end
+
+export.create_vote
+  # push.111 debug.stack drop
+  # call.only_owner
+
+  push.0 exec.account::get_item push.1 add
+  push.0 exec.account::set_item
+
+  exec.sys::truncate_stack
+end
+
+# 1 for "FOR" 0 for "AGAINST"
+# => [vote]
+export.vote
+  # requires to be called only by note
+  # exec.note::get_sender
+  # call.mark_as_voted
+
+  # => [vote]
+  push.0 exec.account::get_item
+
+  # => [election_id, number_of_votes, for_count, against_count, vote] 
+  mem_store.ELECTION_ID
+
+  # => [number_of_votes, for_count, against_count, vote]
+  push.1 add
+
+  # => [number_of_votes+1, for_count, against_count, vote]
+  mem_store.NUMBER_OF_VOTES
+
+  # => [for_count, against_count, vote]
+  swap.2
+
+  # => [vote, against_count, for_count]
+  if.true
+    # FOR 
+
+    # => [against_count, for_count]
+    mem_store.AGAINST_COUNT
+
+    # => [for_count]
+    push.1 add
+
+    # => [for_count+1]
+    mem_store.FOR_COUNT
+
+  else
+    # AGAINST
+
+    # => [against_count, for_count]
+    swap
+
+    # => [for_count, against_count]
+    mem_store.FOR_COUNT
+
+    # => [against_count]
+    push.1 add 
+
+    # => [against_count+1]
+    mem_store.AGAINST_COUNT
+    
+  end
+
+  mem_load.AGAINST_COUNT
+  mem_load.FOR_COUNT
+  mem_load.NUMBER_OF_VOTES
+  mem_load.ELECTION_ID
+
+  # STACK STATE:
+  # => [election_id, number_of_votes, for_count, against_count]
+  push.0 exec.account::set_item
+
+  # increment nonce
+  push.1 exec.account::incr_nonce
+
+  exec.sys::truncate_stack
+
+  drop
+
+end
+
+export.add_voter
+  # call.only_owner
+  push.2
+end
+
