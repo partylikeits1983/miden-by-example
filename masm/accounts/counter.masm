@@ -26,14 +26,10 @@ export.increment_count
     # => [count+1]
     push.0
 
-    push.333 debug.stack drop
-
     # [index, count+1]
     exec.account::set_item
 
     dropw dropw
-
-    push.444 debug.stack drop
 
     # => []
     push.1 exec.account::incr_nonce
@@ -41,5 +37,4 @@ export.increment_count
     # => []
     exec.sys::truncate_stack
 
-    push.555 debug.stack drop
 end

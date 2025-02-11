@@ -210,7 +210,7 @@ async fn main() -> Result<(), ClientError> {
     let procedures = counter_contract.code().procedure_roots();
     let procedures_vec: Vec<RpoDigest> = procedures.collect();
     for (index, procedure) in procedures_vec.iter().enumerate() {
-        println!("Procedure {}: {:?}", index + 1, procedure.to_hex());
+        println!("Procedure {}: {:?}", index + 1, procedure);
     }
     println!("number of procedures: {}", procedures_vec.len());
 
@@ -231,6 +231,15 @@ async fn main() -> Result<(), ClientError> {
         .unwrap()
         .digest()
         .to_hex();
+
+    let increment_count_root_1 = counter_component
+        .library()
+        .mast_forest()
+        .get_node_by_id(get_increment_count_mast_id)
+        .unwrap()
+        .digest();
+
+    println!("proc root: {:?}", increment_count_root_1);
 
     // Load the MASM script referencing the increment procedure
     let file_path = Path::new("./masm/notes/increment_note.masm");
@@ -297,7 +306,8 @@ async fn main() -> Result<(), ClientError> {
     // -------------------------------------------------------------------------
 
     let tx_note_consume_request = TransactionRequestBuilder::new()
-        .with_authenticated_input_notes([(increment_note.id(), Some(Word::default()))])
+        // .with_authenticated_input_notes([(increment_note.id(), Some(Word::default()))])
+        .with_unauthenticated_input_notes([(increment_note, Some(Word::default()))])
         .build();
 
     // Execute the transaction locally
