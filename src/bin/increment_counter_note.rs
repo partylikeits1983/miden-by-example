@@ -32,8 +32,13 @@ use miden_objects::{
 
 pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {
     // RPC endpoint and timeout
-    let endpoint = Endpoint::new("http".to_string(), "localhost".to_string(), Some(57291));
 
+    let endpoint = Endpoint::new(
+        "https".to_string(),
+        "rpc.testnet.miden.io".to_string(),
+        Some(443),
+    );
+    // let endpoint = Endpoint::new("http".to_string(), "localhost".to_string(), Some(57291));
     let timeout_ms = 10_000;
 
     // Build RPC client
@@ -134,7 +139,7 @@ async fn main() -> Result<(), ClientError> {
     println!("\n[STEP 1] Building counter contract from public state");
 
     // Define the Counter Contract account id from counter contract deploy
-    let counter_contract_id = AccountId::from_hex("0x207a2f5970d2ec000000d114025b02").unwrap();
+    let counter_contract_id = AccountId::from_hex("0xf34833f2e3f53800000342e8cf97fe").unwrap();
 
     let account_details = client
         .test_rpc_api()
@@ -306,8 +311,8 @@ async fn main() -> Result<(), ClientError> {
     // -------------------------------------------------------------------------
 
     let tx_note_consume_request = TransactionRequestBuilder::new()
-        // .with_authenticated_input_notes([(increment_note.id(), Some(Word::default()))])
-        .with_unauthenticated_input_notes([(increment_note, Some(Word::default()))])
+        .with_authenticated_input_notes([(increment_note.id(), Some(Word::default()))])
+        // .with_unauthenticated_input_notes([(increment_note, Some(Word::default()))])
         .build();
 
     // Execute the transaction locally
