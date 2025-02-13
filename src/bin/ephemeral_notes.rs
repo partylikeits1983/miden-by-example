@@ -3,6 +3,7 @@ use std::sync::Arc;
 use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+use std::time::Instant;
 use tokio::time::Duration;
 
 use miden_client::{
@@ -238,12 +239,13 @@ async fn main() -> Result<(), ClientError> {
     }
 
     //------------------------------------------------------------
-    // STEP 4: Creating ephemeral P2ID note
+    // STEP 4: Create ephemeral note tx chain
     //------------------------------------------------------------
-    println!("\n[STEP 4] Creating ephemeral note ");
+    println!("\n[STEP 4] Create ephemeral note tx chain");
 
     let mut ephemeral_p2id_notes = vec![];
 
+    let start = Instant::now(); // Start the timer
     for i in 0..4 {
         println!("sender: {:?}", accounts[i].id().to_hex());
         println!("target: {:?}", accounts[i + 1].id().to_hex());
@@ -301,6 +303,11 @@ async fn main() -> Result<(), ClientError> {
 
         // end of tx chain
     }
+    let duration = start.elapsed(); // Stop the timer
+    println!(
+        "Total execution time for 4 ephemeral note txs: {:?}",
+        duration
+    );
 
     tokio::time::sleep(Duration::from_secs(3)).await;
     client.sync_state().await?;
