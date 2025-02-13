@@ -199,7 +199,7 @@ async fn main() -> Result<(), ClientError> {
         .await?;
 
     client.submit_transaction(tx_execution_result).await?;
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
     client.sync_state().await?;
 
     //------------------------------------------------------------
@@ -219,19 +219,33 @@ async fn main() -> Result<(), ClientError> {
                 .new_transaction(alice.id(), transaction_request)
                 .await?;
 
+            let delta = tx_execution_result.account_delta();
+            println!("delta: {:?}", delta);
+
             client.submit_transaction(tx_execution_result).await?;
             break;
         } else {
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     }
-    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
     client.sync_state().await?;
 
-    // let balance = alice.vault().get_balance(faucet_account.id()).unwrap();
-    let assets = alice.vault().assets().enumerate();
-    for asset in assets {
-        println!("balance: {:?}", asset);
+    // sanity check
+    loop {
+        client.sync_state().await?;
+        let alice = client.get_account(alice.id()).await.unwrap();
+
+        let balance = alice.unwrap().account().vault().get_balance(faucet_account.id()).unwrap();
+
+        if balance != 0 {
+            println!("balance: {:?}", balance);
+            break;
+        }
+
+        println!("waiting");
+        tokio::time::sleep(Duration::from_secs(3)).await;
     }
 
     //------------------------------------------------------------
