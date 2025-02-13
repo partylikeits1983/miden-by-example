@@ -10,7 +10,15 @@ use miden_client::{
     account::{
         component::{BasicFungibleFaucet, BasicWallet, RpoFalcon512},
         AccountBuilder, AccountStorageMode, AccountType,
-    }, asset::{FungibleAsset, TokenSymbol}, block, crypto::RpoRandomCoin, note::{create_p2id_note, Note, NoteType}, rpc::{Endpoint, TonicRpcClient}, store::{sqlite_store::SqliteStore, StoreAuthenticator}, transaction::{OutputNote, TransactionRequestBuilder}, utils::{Deserializable, Serializable}, Client, ClientError, Felt
+    },
+    asset::{FungibleAsset, TokenSymbol},
+    crypto::RpoRandomCoin,
+    note::{create_p2id_note, Note, NoteType},
+    rpc::{Endpoint, TonicRpcClient},
+    store::{sqlite_store::SqliteStore, StoreAuthenticator},
+    transaction::{OutputNote, TransactionRequestBuilder},
+    utils::{Deserializable, Serializable},
+    Client, ClientError, Felt,
 };
 
 use miden_objects::{account::AuthSecretKey, crypto::dsa::rpo_falcon512::SecretKey, Word};
@@ -237,20 +245,20 @@ async fn main() -> Result<(), ClientError> {
 
     let mut ephemeral_p2id_notes = vec![];
     let mut landed_blocks = vec![];
-    
-    let start = Instant::now(); 
+
+    let start = Instant::now();
     for i in 0..4 {
-        let loop_start = Instant::now(); 
-        
+        let loop_start = Instant::now();
+
+        println!("\nephemeral tx {:?}", i + 1);
         println!("sender: {:?}", accounts[i].id().to_hex());
         println!("target: {:?}", accounts[i + 1].id().to_hex());
-    
+
         // Time the creation of p2id note
-        let create_start = Instant::now();
         let send_amount = 20;
         let fungible_asset_send_amount =
             FungibleAsset::new(faucet_account.id(), send_amount).unwrap();
-    
+
         let p2id_note = create_p2id_note(
             accounts[i].id(),
             accounts[i + 1].id(),
@@ -260,73 +268,57 @@ async fn main() -> Result<(), ClientError> {
             client.rng(),
         )
         .unwrap();
-        println!("Time to create P2ID note: {:?}", create_start.elapsed());
-    
+
         ephemeral_p2id_notes.push(p2id_note.clone());
-    
+
         let output_note = OutputNote::Full(p2id_note.clone());
-    
+
         // Time transaction request building
-        let request_start = Instant::now();
         let transaction_request = TransactionRequestBuilder::new()
             .with_own_output_notes(vec![output_note])
             .unwrap()
             .build();
-        println!("Time to build transaction request: {:?}", request_start.elapsed());
-    
-        // Time new transaction creation
-        let tx_start = Instant::now();
+
         let tx_execution_result = client
             .new_transaction(accounts[i].id(), transaction_request)
             .await?;
-        println!("Time to create new transaction: {:?}", tx_start.elapsed());
-    
-        // Time transaction submission
-        let submit_start = Instant::now();
+
         client.submit_transaction(tx_execution_result).await?;
-        println!("Time to submit transaction: {:?}", submit_start.elapsed());
-    
-        // Time serialization/deserialization
-        let serialize_start = Instant::now();
+
+        // note serialization/deserialization
         let serialized = p2id_note.to_bytes();
         let deserialized_p2id_note = Note::read_from_bytes(&serialized).unwrap();
-        println!("Time for serialization/deserialization: {:?}", serialize_start.elapsed());
-    
-        println!("original: {:?}", p2id_note.hash());
-        println!("deserialized: {:?}", deserialized_p2id_note.hash());
-    
+
         // Time consume note request building
-        let consume_start = Instant::now();
         let consume_note_request =
             TransactionRequestBuilder::consume_notes(vec![deserialized_p2id_note.id()])
                 .with_unauthenticated_input_notes([(deserialized_p2id_note, None)])
                 .build();
-        println!("Time to build consume note request: {:?}", consume_start.elapsed());
-    
-        // Time new transaction creation for consuming note
-        let tx_consume_start = Instant::now();
+
         let tx_execution_result = client
             .new_transaction(accounts[i + 1].id(), consume_note_request)
             .await?;
-        println!("Time to create new consume transaction: {:?}", tx_consume_start.elapsed());
-    
+
         let block = tx_execution_result.block_num();
         landed_blocks.push(block);
-    
-        // Time transaction submission for consuming note
-        let submit_consume_start = Instant::now();
-        client.submit_transaction(tx_execution_result.clone()).await?;
-        println!("Time to submit consume transaction: {:?}", submit_consume_start.elapsed());
-    
-        println!("Total time for loop iteration {}: {:?}", i, loop_start.elapsed());
+
+        client
+            .submit_transaction(tx_execution_result.clone())
+            .await?;
+
+        println!(
+            "Total time for loop iteration {}: {:?}",
+            i,
+            loop_start.elapsed()
+        );
     }
-    
+
     let duration = start.elapsed();
     println!(
         "Total execution time for 4 ephemeral note txs: {:?}",
         duration
     );
-    
+
     println!("blocks: {:?}", landed_blocks);
 
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -341,7 +333,11 @@ async fn main() -> Result<(), ClientError> {
             .get_balance(faucet_account.id())
             .unwrap();
 
-        println!("account balance balance: {:?}", balance);
+        println!(
+            "Account: {:?} balance: {:?}",
+            account.id().to_hex(),
+            balance
+        );
     }
 
     Ok(())
