@@ -12,10 +12,11 @@ use miden_client::{
     },
     asset::{FungibleAsset, TokenSymbol},
     crypto::RpoRandomCoin,
-    note::{create_p2id_note, NoteType},
+    note::{create_p2id_note, Note, NoteType},
     rpc::{Endpoint, TonicRpcClient},
     store::{sqlite_store::SqliteStore, StoreAuthenticator},
-    transaction::TransactionRequestBuilder,
+    transaction::{OutputNote, TransactionRequestBuilder},
+    utils::{Deserializable, Serializable},
     Client, ClientError, Felt,
 };
 
@@ -23,6 +24,7 @@ use miden_objects::{account::AuthSecretKey, crypto::dsa::rpo_falcon512::SecretKe
 
 pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {
     // RPC endpoint and timeout
+    // let endpoint = Endpoint::new("http".to_string(), "localhost".to_string(), Some(57291));
     let endpoint = Endpoint::new(
         "https".to_string(),
         "rpc.testnet.miden.io".to_string(),
@@ -176,7 +178,7 @@ async fn main() -> Result<(), ClientError> {
 
     let alice = &accounts[0];
     let bob = &accounts[1];
-    let _eve = &accounts[2];
+    // let _eve = &accounts[2];
 
     //------------------------------------------------------------
     // STEP 3: Mint tokens for Alice
@@ -184,10 +186,10 @@ async fn main() -> Result<(), ClientError> {
     println!("\n[STEP 3] Mint tokens");
 
     let amount: u64 = 100;
-    let fungible_asset = FungibleAsset::new(faucet_account.id(), amount).unwrap();
+    let fungible_asset_mint_amount = FungibleAsset::new(faucet_account.id(), amount).unwrap();
 
     let transaction_request = TransactionRequestBuilder::mint_fungible_asset(
-        fungible_asset.clone(),
+        fungible_asset_mint_amount.clone(),
         alice.id(),
         NoteType::Public,
         client.rng(),
@@ -237,7 +239,12 @@ async fn main() -> Result<(), ClientError> {
         client.sync_state().await?;
         let alice = client.get_account(alice.id()).await.unwrap();
 
-        let balance = alice.unwrap().account().vault().get_balance(faucet_account.id()).unwrap();
+        let balance = alice
+            .unwrap()
+            .account()
+            .vault()
+            .get_balance(faucet_account.id())
+            .unwrap();
 
         if balance != 0 {
             println!("balance: {:?}", balance);
@@ -253,17 +260,41 @@ async fn main() -> Result<(), ClientError> {
     //------------------------------------------------------------
     println!("\n[STEP 4] Creating ephemeral note ");
 
+    let send_amount = 20;
+    let fungible_asset_send_amount = FungibleAsset::new(faucet_account.id(), send_amount).unwrap();
+
     let p2id_note = create_p2id_note(
         alice.id(),
         bob.id(),
-        vec![fungible_asset.into()],
+        vec![fungible_asset_send_amount.into()],
         NoteType::Public,
         Felt::new(0),
         client.rng(),
     )
     .unwrap();
 
-    let consume_note_request = TransactionRequestBuilder::new()
+    let output_note = OutputNote::Full(p2id_note.clone());
+
+    let transaction_request = TransactionRequestBuilder::new()
+        .with_own_output_notes(vec![output_note])
+        .unwrap()
+        .build();
+
+    let tx_execution_result = client
+        .new_transaction(alice.id(), transaction_request)
+        .await?;
+
+    // The P2ID note has to have been submitted from Alice to Bob
+    client.submit_transaction(tx_execution_result).await?;
+
+    let serialized = p2id_note.to_bytes();
+    let deserialized_note = Note::read_from_bytes(&serialized).unwrap();
+
+    println!("original: {:?}", p2id_note.hash());
+    println!("deserialized: {:?}", deserialized_note.hash());
+
+    // Then here, Bob can already start to consume it before it even lands in the block
+    let consume_note_request = TransactionRequestBuilder::consume_notes(vec![p2id_note.id()])
         .with_unauthenticated_input_notes([(p2id_note, None)])
         .build();
 
@@ -271,7 +302,41 @@ async fn main() -> Result<(), ClientError> {
         .new_transaction(bob.id(), consume_note_request)
         .await?;
 
-    client.submit_transaction(tx_execution_result).await?;
+    client
+        .submit_transaction(tx_execution_result.clone())
+        .await?;
+
+    let tx_id = tx_execution_result.executed_transaction().id();
+    println!(
+        "View transaction on MidenScan: https://testnet.midenscan.com/tx/{:?}",
+        tx_id
+    );
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    client.sync_state().await?;
+
+    let alice_new_account = client.get_account(alice.clone().id()).await.unwrap();
+    let balance = alice_new_account
+        .unwrap()
+        .account()
+        .vault()
+        .get_balance(faucet_account.id())
+        .unwrap();
+
+    println!("alice's balance: {:?}", balance);
+
+    let bob_new_account = client.get_account(bob.clone().id()).await.unwrap();
+    let balance = bob_new_account
+        .unwrap()
+        .account()
+        .vault()
+        .get_balance(faucet_account.id())
+        .unwrap();
+
+    println!("bob's balance: {:?}", balance);
+
+    println!("alice's account: {:?}", alice.id().to_hex());
+    println!("bob's account: {:?}", bob.id().to_hex());
 
     Ok(())
 }
