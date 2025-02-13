@@ -160,10 +160,12 @@ async fn main() -> Result<(), ClientError> {
 
     // Accounts (for demo purposes)
     let alice = &accounts[0];
+    /*
     let bob = &accounts[1];
     let charlie = &accounts[2];
     let dave = &accounts[3];
     let sybil = &accounts[4];
+     */
 
     //------------------------------------------------------------
     // STEP 3: Mint and consume tokens for Alice
