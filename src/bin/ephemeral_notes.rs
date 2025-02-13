@@ -238,9 +238,9 @@ async fn main() -> Result<(), ClientError> {
     let mut ephemeral_p2id_notes = vec![];
     let mut landed_blocks = vec![];
     
-    let start = Instant::now(); // Start the total timer
+    let start = Instant::now(); 
     for i in 0..4 {
-        let loop_start = Instant::now(); // Start loop timer
+        let loop_start = Instant::now(); 
         
         println!("sender: {:?}", accounts[i].id().to_hex());
         println!("target: {:?}", accounts[i + 1].id().to_hex());
@@ -321,7 +321,7 @@ async fn main() -> Result<(), ClientError> {
         println!("Total time for loop iteration {}: {:?}", i, loop_start.elapsed());
     }
     
-    let duration = start.elapsed(); // Stop the total timer
+    let duration = start.elapsed();
     println!(
         "Total execution time for 4 ephemeral note txs: {:?}",
         duration
