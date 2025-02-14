@@ -208,17 +208,6 @@ async fn main() -> Result<(), ClientError> {
     // Compile the script referencing our procedure
     let tx_script = client.compile_tx_script(vec![], &replaced_code).unwrap();
 
-    /*     let tx_script = client
-       .compile_tx_script(
-           vec![(
-               [Felt::new(1), Felt::new(1), Felt::new(0), Felt::new(0)],
-               vec![Felt::new(1), Felt::new(1), Felt::new(0), Felt::new(0)],
-           )],
-           &replaced_code,
-       )
-       .unwrap();
-    */
-
     // Build a transaction request with the custom script
     let tx_increment_request = TransactionRequestBuilder::new()
         .with_custom_script(tx_script)
