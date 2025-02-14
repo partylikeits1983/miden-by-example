@@ -129,7 +129,7 @@ async fn main() -> Result<(), ClientError> {
     let mut seeds = vec![];
     let mut key_pairs = vec![];
 
-    let number_of_accounts = 2500;
+    let number_of_accounts = 50;
 
     for _ in 0..number_of_accounts {
         let init_seed = ChaCha20Rng::from_entropy().gen();
@@ -249,7 +249,7 @@ async fn main() -> Result<(), ClientError> {
     let mut landed_blocks = vec![];
 
     let start = Instant::now();
-    for i in 0..number_of_accounts-1 {
+    for i in 0..number_of_accounts - 1 {
         let loop_start = Instant::now();
 
         println!("\nephemeral tx {:?}", i + 1);
