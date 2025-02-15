@@ -129,9 +129,9 @@ async fn main() -> Result<(), ClientError> {
     let mut seeds = vec![];
     let mut key_pairs = vec![];
 
-    let number_of_accounts = 50;
+    let number_of_accounts = 10;
 
-    for _ in 0..number_of_accounts {
+    for i in 0..number_of_accounts {
         let init_seed = ChaCha20Rng::from_entropy().gen();
 
         let key_pair = SecretKey::with_rng(client.rng());
@@ -149,7 +149,7 @@ async fn main() -> Result<(), ClientError> {
         key_pairs.push(key_pair.clone());
         seeds.push(seed.clone());
 
-        println!("account id: {:?}", account.id().to_hex());
+        println!("account id {:?}: {:?}", i, account.id().to_hex());
 
         client
             .add_account(
@@ -265,7 +265,7 @@ async fn main() -> Result<(), ClientError> {
             accounts[i].id(),
             accounts[i + 1].id(),
             vec![fungible_asset_send_amount.into()],
-            NoteType::Public,
+            NoteType::Private,
             Felt::new(0),
             client.rng(),
         )
