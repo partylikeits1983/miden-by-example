@@ -23,12 +23,12 @@ use miden_objects::{
 
 pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {
     // RPC endpoint and timeout
-    /*     let endpoint = Endpoint::new(
+    let endpoint = Endpoint::new(
         "https".to_string(),
         "rpc.testnet.miden.io".to_string(),
         Some(443),
-    ); */
-    let endpoint = Endpoint::new("http".to_string(), "localhost".to_string(), Some(57291));
+    );
+    // let endpoint = Endpoint::new("http".to_string(), "localhost".to_string(), Some(57291));
     let timeout_ms = 10_000;
 
     // Build RPC client

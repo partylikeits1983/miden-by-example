@@ -129,7 +129,9 @@ async fn main() -> Result<(), ClientError> {
     let mut seeds = vec![];
     let mut key_pairs = vec![];
 
-    for _ in 0..5 {
+    let number_of_accounts = 10;
+
+    for i in 0..number_of_accounts {
         let init_seed = ChaCha20Rng::from_entropy().gen();
 
         let key_pair = SecretKey::with_rng(client.rng());
@@ -147,7 +149,7 @@ async fn main() -> Result<(), ClientError> {
         key_pairs.push(key_pair.clone());
         seeds.push(seed.clone());
 
-        println!("account id: {:?}", account.id().to_hex());
+        println!("account id {:?}: {:?}", i, account.id().to_hex());
 
         client
             .add_account(
@@ -247,7 +249,7 @@ async fn main() -> Result<(), ClientError> {
     let mut landed_blocks = vec![];
 
     let start = Instant::now();
-    for i in 0..4 {
+    for i in 0..number_of_accounts - 1 {
         let loop_start = Instant::now();
 
         println!("\nephemeral tx {:?}", i + 1);
@@ -259,11 +261,17 @@ async fn main() -> Result<(), ClientError> {
         let fungible_asset_send_amount =
             FungibleAsset::new(faucet_account.id(), send_amount).unwrap();
 
+        let note_type: NoteType = if i % 2 == 0 {
+            NoteType::Private
+        } else {
+            NoteType::Public
+        };
+
         let p2id_note = create_p2id_note(
             accounts[i].id(),
             accounts[i + 1].id(),
             vec![fungible_asset_send_amount.into()],
-            NoteType::Public,
+            note_type,
             Felt::new(0),
             client.rng(),
         )

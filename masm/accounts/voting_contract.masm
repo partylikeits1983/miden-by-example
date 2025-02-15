@@ -9,7 +9,6 @@ use.std::crypto::hashes::rpo
 # 1 - NUMBER OF VOTES
 # 2 - FOR COUNT
 # 3 - AGAINST COUNT
-
 const.ELECTION_ID=0
 const.NUMBER_OF_VOTES=1
 const.FOR_COUNT=2
