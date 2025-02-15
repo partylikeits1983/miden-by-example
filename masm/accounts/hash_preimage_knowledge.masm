@@ -1,0 +1,11 @@
+use.std::crypto::hashes::rpo
+
+export.prove_hash
+
+    push.1
+
+    exec.rpo::squeeze_digest
+
+    debug.stack
+
+end

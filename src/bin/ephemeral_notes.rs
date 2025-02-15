@@ -261,11 +261,17 @@ async fn main() -> Result<(), ClientError> {
         let fungible_asset_send_amount =
             FungibleAsset::new(faucet_account.id(), send_amount).unwrap();
 
+        let note_type: NoteType = if i % 2 == 0 {
+            NoteType::Private
+        } else {
+            NoteType::Public
+        };
+
         let p2id_note = create_p2id_note(
             accounts[i].id(),
             accounts[i + 1].id(),
             vec![fungible_asset_send_amount.into()],
-            NoteType::Private,
+            note_type,
             Felt::new(0),
             client.rng(),
         )

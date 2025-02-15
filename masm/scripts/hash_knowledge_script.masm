@@ -1,0 +1,3 @@
+begin
+    call.{prove_hash}
+end
