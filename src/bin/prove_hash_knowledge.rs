@@ -97,15 +97,10 @@ async fn main() -> Result<(), ClientError> {
     println!("digest: {:?}", digest);
 
     // Compile the account code into `AccountComponent` with one storage slot
-    let contract_component = AccountComponent::compile(
-        account_code,
-        assembler,
-        vec![StorageSlot::Value(
-            *digest
-        )],
-    )
-    .unwrap()
-    .with_supports_all_types();
+    let contract_component =
+        AccountComponent::compile(account_code, assembler, vec![StorageSlot::Value(*digest)])
+            .unwrap()
+            .with_supports_all_types();
 
     // Init seed for the contract
     let init_seed = ChaCha20Rng::from_entropy().gen();
@@ -130,12 +125,7 @@ async fn main() -> Result<(), ClientError> {
     let (_pub_key, auth_secret_key) = get_new_pk_and_authenticator();
 
     client
-        .add_account(
-            &contract.clone(),
-            Some(seed),
-            &auth_secret_key,
-            false,
-        )
+        .add_account(&contract.clone(), Some(seed), &auth_secret_key, false)
         .await
         .unwrap();
 
