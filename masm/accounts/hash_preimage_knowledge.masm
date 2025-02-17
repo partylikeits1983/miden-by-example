@@ -1,11 +1,24 @@
-use.std::crypto::hashes::rpo
+use.miden::account
+use.std::sys
 
+# => [C,B]
 export.prove_hash
 
-    push.1
+    # => [C,B,A]
+    hperm
 
-    exec.rpo::squeeze_digest
+    # => [F,E,D]
+    # E is digest
+    dropw swapw dropw
 
-    debug.stack
+    # => [E]
+    push.0
+    exec.account::get_item
+
+    # => [DIGEST, E]
+    assert_eqw
+
+    # => []
+    exec.sys::truncate_stack
 
 end

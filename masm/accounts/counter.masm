@@ -4,7 +4,7 @@ use.std::sys
 export.get_count
     # => []
     push.0
-    
+
     # => [index]
     exec.account::get_item
 

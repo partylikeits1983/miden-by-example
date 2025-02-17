@@ -1,3 +1,12 @@
+use.std::sys
+
 begin
+
+    push.1.0.0.0
+    push.0.0.0.1
+
     call.{prove_hash}
+
+    exec.sys::truncate_stack
+
 end

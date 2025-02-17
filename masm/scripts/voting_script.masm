@@ -1,13 +1,13 @@
 use.std::sys
 
 begin
-  # => []
-  push.1
+    # => []
+    push.1
 
-  # => [VOTE]
-  call.{vote}
+    # => [VOTE]
+    call.{vote}
 
-  exec.sys::truncate_stack
+    exec.sys::truncate_stack
 
-  drop
+    drop
 end

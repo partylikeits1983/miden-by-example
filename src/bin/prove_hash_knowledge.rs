@@ -14,6 +14,7 @@ use miden_client::{
     Client, ClientError, Felt,
 };
 
+use miden_crypto::hash::rpo::{Rpo256 as Hasher, RpoDigest as Digest};
 use miden_objects::{
     account::{AccountBuilder, AccountComponent, AuthSecretKey, StorageSlot},
     assembly::Assembler,
@@ -70,57 +71,68 @@ async fn main() -> Result<(), ClientError> {
     let mut client = initialize_client().await?;
 
     // -------------------------------------------------------------------------
-    // STEP 1: Create a basic counter contract
+    // STEP 1: Create a basic contract
     // -------------------------------------------------------------------------
     println!("\n[STEP 1] Creating contract.");
 
-    // Load the MASM file for the counter contract
+    // Load the MASM file for the contract
     let file_path = Path::new("./masm/accounts/hash_preimage_knowledge.masm");
     let account_code = fs::read_to_string(file_path).unwrap();
 
     // Prepare assembler (debug mode = true)
     let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
 
+    // Hashing Secret number combination
+    let elements = [
+        Felt::new(1),
+        Felt::new(0),
+        Felt::new(0),
+        Felt::new(0),
+        Felt::new(0),
+        Felt::new(0),
+        Felt::new(0),
+        Felt::new(1),
+    ];
+    let digest = Hasher::hash_elements(&elements);
+    println!("digest: {:?}", digest);
+
     // Compile the account code into `AccountComponent` with one storage slot
-    let counter_component = AccountComponent::compile(
+    let contract_component = AccountComponent::compile(
         account_code,
         assembler,
-        vec![StorageSlot::Value([
-            Felt::new(0),
-            Felt::new(0),
-            Felt::new(0),
-            Felt::new(0),
-        ])],
+        vec![StorageSlot::Value(
+            *digest
+        )],
     )
     .unwrap()
     .with_supports_all_types();
 
-    // Init seed for the counter contract
+    // Init seed for the contract
     let init_seed = ChaCha20Rng::from_entropy().gen();
 
     // Anchor block of the account
     let anchor_block = client.get_latest_epoch_block().await.unwrap();
 
     // Build the new `Account` with the component
-    let (contract, counter_seed) = AccountBuilder::new(init_seed)
+    let (contract, seed) = AccountBuilder::new(init_seed)
         .anchor((&anchor_block).try_into().unwrap())
         .account_type(AccountType::RegularAccountImmutableCode)
         .storage_mode(AccountStorageMode::Public)
-        .with_component(counter_component.clone())
+        .with_component(contract_component.clone())
         .build()
         .unwrap();
 
     println!("contract id: {:?}", contract.id().to_hex());
     println!("account_storage: {:?}", contract.storage());
 
-    // Since the counter contract is public and does sign any transactions, auth_secret_key is not required.
+    // Since the contract is public and does sign any transactions, auth_secret_key is not required.
     // However, to import to the client, we must generate a random value.
-    let (_counter_pub_key, auth_secret_key) = get_new_pk_and_authenticator();
+    let (_pub_key, auth_secret_key) = get_new_pk_and_authenticator();
 
     client
         .add_account(
             &contract.clone(),
-            Some(counter_seed),
+            Some(seed),
             &auth_secret_key,
             false,
         )
@@ -128,17 +140,17 @@ async fn main() -> Result<(), ClientError> {
         .unwrap();
 
     // Print the procedure root hash
-    let get_proc_export = counter_component
+    let get_proc_export = contract_component
         .library()
         .exports()
         .find(|export| export.name.as_str() == "prove_hash")
         .unwrap();
 
-    let get_proc_mast_id = counter_component
+    let get_proc_mast_id = contract_component
         .library()
         .get_export_node_id(get_proc_export);
 
-    let proc_hash = counter_component
+    let proc_hash = contract_component
         .library()
         .mast_forest()
         .get_node_by_id(get_proc_mast_id)
@@ -146,12 +158,12 @@ async fn main() -> Result<(), ClientError> {
         .digest()
         .to_hex();
 
-    println!("increment_count procedure hash: {:?}", proc_hash);
+    println!("prove_hash procedure hash: {:?}", proc_hash);
 
     // -------------------------------------------------------------------------
-    // STEP 2: Call the Counter Contract with a script
+    // STEP 2: Call the Contract with a script
     // -------------------------------------------------------------------------
-    println!("\n[STEP 2] Call Counter Contract With Script");
+    println!("\n[STEP 2] Call Contract With Script");
 
     // Load the MASM script referencing the increment procedure
     let file_path = Path::new("./masm/scripts/hash_knowledge_script.masm");
@@ -185,18 +197,7 @@ async fn main() -> Result<(), ClientError> {
     // Submit transaction to the network
     let _ = client.submit_transaction(tx_result).await;
 
-    // Wait, then re-sync
-    tokio::time::sleep(Duration::from_secs(3)).await;
     client.sync_state().await.unwrap();
-
-    // Retrieve updated contract data to see the incremented counter
-    let account = client.get_account(contract.id()).await.unwrap();
-    println!(
-        "counter contract storage: {:?}",
-        account.unwrap().account().storage().get_item(0)
-    );
-
-    // Build the account
 
     Ok(())
 }
