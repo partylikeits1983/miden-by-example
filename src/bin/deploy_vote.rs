@@ -15,7 +15,7 @@ use miden_client::{
 };
 
 use miden_objects::{
-    account::{AccountBuilder, AccountComponent, AuthSecretKey, StorageSlot},
+    account::{AccountBuilder, AccountComponent, AuthSecretKey, StorageMap, StorageSlot},
     assembly::Assembler,
     crypto::dsa::rpo_falcon512::SecretKey,
     Word,
@@ -98,22 +98,20 @@ async fn main() -> Result<(), ClientError> {
     // Prepare assembler (debug mode = true)
     let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
 
-    let mut storage: Vec<StorageSlot> = Vec::new();
+    let storage_slot_value_0 =
+        StorageSlot::Value([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(0)]);
 
-    // Push 128 default storage slots into the vector
-    for _ in 0..1 {
-        storage.push(StorageSlot::Value([
-            Felt::new(1), // against count
-            Felt::new(0), // for count
-            Felt::new(1), // num of votes
-            Felt::new(0), // election_id
-        ]));
-    }
+    let storage_map = StorageMap::new();
+    let storage_slot_map = StorageSlot::Map(storage_map.clone());
 
     // Compile the account code into `AccountComponent` with the storage slots
-    let contract_component = AccountComponent::compile(account_code, assembler, storage)
-        .unwrap()
-        .with_supports_all_types();
+    let contract_component = AccountComponent::compile(
+        account_code,
+        assembler,
+        vec![storage_slot_value_0, storage_slot_map],
+    )
+    .unwrap()
+    .with_supports_all_types();
 
     // Init seed for the counter contract
     let init_seed = ChaCha20Rng::from_entropy().gen();
@@ -162,7 +160,7 @@ async fn main() -> Result<(), ClientError> {
         .library()
         .get_export_node_id(get_proc_export);
 
-    let increment_count_root = contract_component
+    let create_vote_hash = contract_component
         .library()
         .mast_forest()
         .get_node_by_id(get_increment_count_mast_id)
@@ -170,7 +168,7 @@ async fn main() -> Result<(), ClientError> {
         .digest()
         .to_hex();
 
-    println!("create_vote procedure root: {:?}", increment_count_root);
+    println!("create_vote procedure hash: {:?}", create_vote_hash);
 
     // Print the procedure root hash
     let get_vote_export = contract_component
@@ -183,14 +181,14 @@ async fn main() -> Result<(), ClientError> {
         .library()
         .get_export_node_id(get_vote_export);
 
-    let vote_proc_root = contract_component
+    let vote_proc_hash = contract_component
         .library()
         .mast_forest()
         .get_node_by_id(get_vote_mast_id)
         .unwrap()
         .digest()
         .to_hex();
-    println!("vote procedure root: {:?}", vote_proc_root);
+    println!("vote procedure hash: {:?}", vote_proc_hash);
 
     // -------------------------------------------------------------------------
     // STEP 2: Call the Counter Contract with a script
@@ -202,7 +200,7 @@ async fn main() -> Result<(), ClientError> {
     let original_code = fs::read_to_string(file_path).unwrap();
 
     // Replace the placeholder with the actual procedure call
-    let replaced_code = original_code.replace("{vote}", &vote_proc_root);
+    let replaced_code = original_code.replace("{vote}", &vote_proc_hash);
     println!("Final script:\n{}", replaced_code);
 
     // Compile the script referencing our procedure
@@ -233,12 +231,14 @@ async fn main() -> Result<(), ClientError> {
     tokio::time::sleep(Duration::from_secs(3)).await;
     client.sync_state().await.unwrap();
 
+    /*
     // Retrieve updated contract data to see the incremented counter
     let account = client.get_account(voting_contract.id()).await.unwrap();
     println!(
         "counter contract storage: {:?}",
         account.unwrap().account().storage()
     );
+    */
 
     Ok(())
 }

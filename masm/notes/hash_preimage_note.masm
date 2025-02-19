@@ -1,0 +1,9 @@
+
+# => [HASH_PREIMAGE]
+begin
+
+  push.3030 debug.stack drop
+
+  push.{digest}
+
+end

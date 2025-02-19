@@ -90,6 +90,7 @@ export.vote
     mem_load.NUMBER_OF_VOTES
     mem_load.ELECTION_ID
 
+
     # STACK STATE:
     # => [election_id, number_of_votes, for_count, against_count]
     push.0 exec.account::set_item
@@ -97,7 +98,34 @@ export.vote
     # increment nonce
     push.1 exec.account::incr_nonce
 
+    # adding value to storage map
+    push.1
+    exec.account::get_item
+
+    push.111 debug.stack drop
+
+    # old root
+    push.1.3.3.1 # value
+    push.1.1.1.1 # key
+    push.1
+
+    push.222 debug.stack drop
+
+    # => [index, KEY, VALUE, OLD_ROOT]
+    exec.account::set_map_item
+    dropw dropw
+
+    push.333 debug.stack drop
+
+    push.1.1.1.1 push.1
+
+    # => [index, KEY]
+    exec.account::get_map_item
+    push.444 debug.stack drop
+
     exec.sys::truncate_stack
+
+    push.555 debug.stack drop
 
     drop
 

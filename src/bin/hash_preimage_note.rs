@@ -8,20 +8,21 @@ use tokio::time::Duration;
 
 use miden_client::{
     account::{
-        component::{BasicWallet, RpoFalcon512},
-        Account, AccountBuilder, AccountCode, AccountId, AccountStorageMode, AccountType,
+        component::{BasicFungibleFaucet, BasicWallet, RpoFalcon512},
+        AccountBuilder, AccountStorageMode, AccountType,
     },
-    asset::AssetVault,
+    asset::{FungibleAsset, TokenSymbol},
     crypto::RpoRandomCoin,
     note::{
         Note, NoteAssets, NoteExecutionHint, NoteExecutionMode, NoteInputs, NoteMetadata,
         NoteRecipient, NoteScript, NoteTag, NoteType,
     },
-    rpc::{domain::account::AccountDetails, Endpoint, TonicRpcClient},
+    rpc::{Endpoint, TonicRpcClient},
     store::{sqlite_store::SqliteStore, StoreAuthenticator},
     transaction::{OutputNote, TransactionKernel, TransactionRequestBuilder},
     Client, ClientError, Felt,
 };
+use miden_crypto::hash::rpo::{Rpo256 as Hasher, RpoDigest as Digest};
 
 use miden_objects::{
     account::{AccountComponent, AccountStorage, AuthSecretKey, StorageSlot},
@@ -97,7 +98,7 @@ async fn main() -> Result<(), ClientError> {
     println!("Latest block: {}", sync_summary.block_num);
 
     //------------------------------------------------------------
-    // STEP 1: Create a basic account for Voter
+    // STEP 1: Create a basic account for Alice
     //------------------------------------------------------------
     println!("\n[STEP 1] Creating a new account for Alice");
 
@@ -133,126 +134,180 @@ async fn main() -> Result<(), ClientError> {
 
     println!("Alice's account ID: {:?}", alice_account.id().to_hex());
 
-    // -------------------------------------------------------------------------
-    // STEP 2: Build Counter Contract From Public State
-    // -------------------------------------------------------------------------
-    println!("\n[STEP 1] Building counter contract from public state");
+    // Account seed
+    let mut init_seed = [0u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
 
-    // Define the Counter Contract account id from counter contract deploy
-    let counter_contract_id = AccountId::from_hex("0x2b79dc81b4afea0000057e9b2daffd").unwrap();
+    // Generate key pair
+    let key_pair = SecretKey::with_rng(client.rng());
 
-    let account_details = client
-        .test_rpc_api()
-        .get_account_update(counter_contract_id)
-        .await
-        .unwrap();
+    // Anchor block
+    let anchor_block = client.get_latest_epoch_block().await.unwrap();
 
-    let AccountDetails::Public(counter_contract_details, _) = account_details else {
-        panic!("counter contract must be public");
-    };
+    // Build the account
+    let builder = AccountBuilder::new(init_seed)
+        .anchor((&anchor_block).try_into().unwrap())
+        .account_type(AccountType::RegularAccountUpdatableCode)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(RpoFalcon512::new(key_pair.public_key()))
+        .with_component(BasicWallet);
 
-    // Getting the value of the count from slot 0 and the nonce of the counter contract
-    let count_value = counter_contract_details.storage().slots().get(0).unwrap();
-    let counter_nonce = counter_contract_details.nonce();
+    let (bob_account, seed) = builder.build().unwrap();
 
-    println!("count val: {:?}", count_value.value());
-    println!("counter nonce: {:?}", counter_nonce);
+    // Add the account to the client
+    client
+        .add_account(
+            &bob_account,
+            Some(seed),
+            &AuthSecretKey::RpoFalcon512(key_pair),
+            false,
+        )
+        .await?;
 
-    // Load the MASM file for the counter contract
-    let file_path = Path::new("./masm/accounts/counter.masm");
-    let account_code = fs::read_to_string(file_path).unwrap();
+    println!("Bob's account ID: {:?}", bob_account.id().to_hex());
 
-    // Prepare assembler (debug mode = true)
-    let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
+    //------------------------------------------------------------
+    // STEP 2: Deploy a fungible faucet
+    //------------------------------------------------------------
+    println!("\n[STEP 2] Deploying a new fungible faucet.");
 
-    // Compile the account code into `AccountComponent` with the count value returned by the node
-    let counter_component = AccountComponent::compile(
-        account_code,
-        assembler.clone(),
-        vec![StorageSlot::Value(count_value.value())],
+    // Faucet seed
+    let mut init_seed = [0u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+
+    // Anchor block
+    let anchor_block = client.get_latest_epoch_block().await.unwrap();
+
+    // Faucet parameters
+    let symbol = TokenSymbol::new("MID").unwrap();
+    let decimals = 8;
+    let max_supply = Felt::new(1_000_000);
+
+    // Generate key pair
+    let key_pair = SecretKey::with_rng(client.rng());
+
+    // Build the account
+    let builder = AccountBuilder::new(init_seed)
+        .anchor((&anchor_block).try_into().unwrap())
+        .account_type(AccountType::FungibleFaucet)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(RpoFalcon512::new(key_pair.public_key()))
+        .with_component(BasicFungibleFaucet::new(symbol, decimals, max_supply).unwrap());
+
+    let (faucet_account, seed) = builder.build().unwrap();
+
+    // Add the faucet to the client
+    client
+        .add_account(
+            &faucet_account,
+            Some(seed),
+            &AuthSecretKey::RpoFalcon512(key_pair),
+            false,
+        )
+        .await?;
+
+    println!("Faucet account ID: {:?}", faucet_account.id().to_hex());
+
+    // Resync to show newly deployed faucet
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    client.sync_state().await?;
+
+    //------------------------------------------------------------
+    // STEP 3: Mint and consume tokens for Alice
+    //------------------------------------------------------------
+    println!("\n[STEP 3] Mint tokens");
+
+    let amount: u64 = 100;
+    let fungible_asset_mint_amount = FungibleAsset::new(faucet_account.id(), amount).unwrap();
+
+    let transaction_request = TransactionRequestBuilder::mint_fungible_asset(
+        fungible_asset_mint_amount.clone(),
+        alice_account.id(),
+        NoteType::Public,
+        client.rng(),
     )
     .unwrap()
-    .with_supports_all_types();
-
-    // Initialize the AccountStorage with the count value returned by the node
-    let account_storage =
-        AccountStorage::new(vec![StorageSlot::Value(count_value.value())]).unwrap();
-
-    // Build AccountCode from components
-    let account_code = AccountCode::from_components(
-        &[counter_component.clone()],
-        AccountType::RegularAccountImmutableCode,
-    )
-    .unwrap();
-
-    // The counter contract doesn't have any assets so we pass an empty vector
-    let vault = AssetVault::new(&[]).unwrap();
-
-    // Build the counter contract from parts
-    let counter_contract = Account::from_parts(
-        counter_contract_id,
-        vault,
-        account_storage,
-        account_code,
-        counter_nonce,
-    );
-
-    // Since the counter contract is public and does sign any transactions, auth_secret_key is not required.
-    // However, to import to the client, we must generate a random value.
-    let (_, _auth_secret_key) = get_new_pk_and_authenticator();
+    .build();
+    let tx_execution_result = client
+        .new_transaction(faucet_account.id(), transaction_request)
+        .await?;
 
     client
-        .add_account(&counter_contract.clone(), None, &_auth_secret_key, true)
-        .await
-        .unwrap();
+        .submit_transaction(tx_execution_result.clone())
+        .await?;
 
-    // -------------------------------------------------------------------------
-    // STEP 3: Create counter contract increment NOTE using voter account
-    // -------------------------------------------------------------------------
-    println!("\n[STEP 2] Call the increment_count procedure in the counter contract");
+    let note_id_mint = tx_execution_result.created_notes().get_note(0).id();
 
-    // Print procedure root hashes
-    let procedures = counter_contract.code().procedure_roots();
-    let procedures_vec: Vec<RpoDigest> = procedures.collect();
-    for (index, procedure) in procedures_vec.iter().enumerate() {
-        println!("Procedure {}: {:?}", index + 1, procedure);
+    // consuming
+    loop {
+        // Resync to get the latest data
+        client.sync_state().await?;
+
+        let consumable_notes = client
+            .get_consumable_notes(Some(alice_account.id()))
+            .await?;
+        let list_of_note_ids: Vec<_> = consumable_notes.iter().map(|(note, _)| note.id()).collect();
+        println!("number of notes: {:?}", list_of_note_ids.len());
+
+        // Check if note_id_mint exists in the list_of_note_ids vector
+        if list_of_note_ids.contains(&note_id_mint) {
+            let transaction_request =
+                TransactionRequestBuilder::consume_notes(vec![note_id_mint]).build();
+            let tx_execution_result = client
+                .new_transaction(alice_account.id(), transaction_request)
+                .await?;
+
+            let delta = tx_execution_result.account_delta();
+            println!("delta: {:?}", delta);
+
+            client.submit_transaction(tx_execution_result).await?;
+            break;
+        } else {
+            println!("waiting");
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
     }
-    println!("number of procedures: {}", procedures_vec.len());
 
-    let get_increment_export = counter_component
-        .library()
-        .exports()
-        .find(|export| export.name.as_str() == "increment_count")
-        .unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    client.sync_state().await?;
 
-    let get_increment_count_mast_id = counter_component
-        .library()
-        .get_export_node_id(get_increment_export);
+    // -------------------------------------------------------------------------
+    // STEP 4: Create counter contract increment NOTE using voter account
+    // -------------------------------------------------------------------------
+    println!("\n[STEP 2] Create note");
 
-    let increment_count_root = counter_component
-        .library()
-        .mast_forest()
-        .get_node_by_id(get_increment_count_mast_id)
-        .unwrap()
-        .digest()
-        .to_hex();
-
-    let increment_count_root_1 = counter_component
-        .library()
-        .mast_forest()
-        .get_node_by_id(get_increment_count_mast_id)
-        .unwrap()
-        .digest();
-
-    println!("proc root: {:?}", increment_count_root_1);
+    // Hashing Secret number combination
+    let elements = [
+        Felt::new(1),
+        Felt::new(0),
+        Felt::new(0),
+        Felt::new(0),
+        Felt::new(0),
+        Felt::new(0),
+        Felt::new(0),
+        Felt::new(1),
+    ];
+    let digest = Hasher::hash_elements(&elements);
+    println!("digest: {:?}", digest);
 
     // Load the MASM script referencing the increment procedure
-    let file_path = Path::new("./masm/notes/increment_note.masm");
+    let file_path = Path::new("./masm/notes/hash_preimage_note.masm");
     let original_code = fs::read_to_string(file_path).unwrap();
 
+    let hash_str: Vec<Felt> = digest.to_vec(); // Example vector, replace with your actual data
+    let formatted_str: String = hash_str
+        .iter()
+        .map(|felt| felt.to_string())
+        .collect::<Vec<String>>()
+        .join(".");
+
+    println!("{}", formatted_str);
+
     // Replace the placeholder with the actual procedure call
-    let replaced_code = original_code.replace("{increment_count}", &increment_count_root);
+    let replaced_code = original_code.replace("{digest}", &formatted_str);
     println!("Final script:\n{}", replaced_code);
+
+    let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
 
     let rng = client.rng();
     let serial_num = rng.draw_word();
@@ -270,7 +325,7 @@ async fn main() -> Result<(), ClientError> {
         NoteExecutionHint::always(),
         aux,
     )?;
-    let vault = NoteAssets::new(vec![])?;
+    let vault = NoteAssets::new(vec![fungible_asset_mint_amount.clone().into()])?;
 
     // Building note
     let increment_note = Note::new(vault, metadata, recipient);
@@ -278,10 +333,7 @@ async fn main() -> Result<(), ClientError> {
 
     let output_note = OutputNote::Full(increment_note.clone());
 
-    // Build a transaction request with the custom script
-
     let incr_note_create_request = TransactionRequestBuilder::new()
-        // .with_expected_output_notes([vote_note].to_vec())
         .with_own_output_notes([output_note].to_vec())
         .unwrap()
         .build();
@@ -307,16 +359,19 @@ async fn main() -> Result<(), ClientError> {
     client.sync_state().await.unwrap();
 
     // -------------------------------------------------------------------------
-    // STEP 4: Consume Increment Note with Counter Contract
+    // STEP 5: Consume Note
     // -------------------------------------------------------------------------
 
+    let secret = [Felt::new(0), Felt::new(3), Felt::new(0), Felt::new(3)];
+    // let note_args = secret;
+
     let tx_note_consume_request = TransactionRequestBuilder::new()
-        .with_authenticated_input_notes([(increment_note.id(), Some(Word::default()))])
+        .with_authenticated_input_notes([(increment_note.id(), Some(secret))])
         .build();
 
     // Execute the transaction locally
     let tx_result = client
-        .new_transaction(counter_contract.id(), tx_note_consume_request)
+        .new_transaction(bob_account.id(), tx_note_consume_request)
         .await
         .unwrap();
 
@@ -331,14 +386,6 @@ async fn main() -> Result<(), ClientError> {
     println!("waiting 10 seconds");
     tokio::time::sleep(Duration::from_secs(10)).await;
     client.sync_state().await.unwrap();
-
-    // Wait, then re-sync
-    /*     // Retrieve updated contract data to see the incremented counter
-    let account = client.get_account(counter_contract.id()).await.unwrap();
-    println!(
-        "counter contract storage: {:?}",
-        account.unwrap().account().storage().get_item(0)
-    ); */
 
     Ok(())
 }
