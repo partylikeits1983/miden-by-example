@@ -1,5 +1,5 @@
 begin
-  push.111 debug.stack drop
-  call.{increment_count}
-  push.444 debug.stack drop
+    push.111 debug.stack drop
+    call.{increment_count}
+    push.444 debug.stack drop
 end

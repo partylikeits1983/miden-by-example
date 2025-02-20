@@ -90,7 +90,6 @@ export.vote
     mem_load.NUMBER_OF_VOTES
     mem_load.ELECTION_ID
 
-
     # STACK STATE:
     # => [election_id, number_of_votes, for_count, against_count]
     push.0 exec.account::set_item

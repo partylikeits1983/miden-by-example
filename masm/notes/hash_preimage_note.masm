@@ -4,32 +4,32 @@ use.miden::contracts::wallets::basic->wallet
 # => [HASH_PREIMAGE]
 begin
 
-  # => [HASH_PREIMAGE]
-  hperm
+    # => [HASH_PREIMAGE]
+    hperm
 
-  # => [F,E,D]
-  # E is digest
-  dropw swapw dropw
+    # => [F,E,D]
+    # E is digest
+    dropw swapw dropw
 
-  # => [DIGEST]
-  push.0 exec.note::get_inputs drop drop
+    # => [DIGEST]
+    push.0 exec.note::get_inputs drop drop
 
-  # => [DIGEST]
-  padw push.0 mem_loadw
+    # => [DIGEST]
+    padw push.0 mem_loadw
 
-  # => [INPUTS, DIGEST]
-  assert_eqw
+    # => [INPUTS, DIGEST]
+    assert_eqw
 
-  # => []
-  push.0 exec.note::get_assets
+    # => []
+    push.0 exec.note::get_assets
 
-  # => [num_assets, dest_ptr]
-  drop
+    # => [num_assets, dest_ptr]
+    drop
 
-  # => [dest_ptr]
-  mem_loadw
+    # => [dest_ptr]
+    mem_loadw
 
-  # => [ASSET]
-  call.wallet::receive_asset
+    # => [ASSET]
+    call.wallet::receive_asset
 
 end
