@@ -95,9 +95,9 @@ async fn main() -> Result<(), ClientError> {
     println!("Latest block: {}", sync_summary.block_num);
 
     //------------------------------------------------------------
-    // STEP 1: Create a basic account for Alice
+    // STEP 1: Create basic accounts
     //------------------------------------------------------------
-    println!("\n[STEP 1] Creating a new account for Alice");
+    println!("\n[STEP 1] Creating a new account");
 
     // Account seed
     let mut init_seed = [0u8; 32];
@@ -243,13 +243,15 @@ async fn main() -> Result<(), ClientError> {
         let consumable_notes = client
             .get_consumable_notes(Some(alice_account.id()))
             .await?;
-        let list_of_note_ids: Vec<_> = consumable_notes.iter().map(|(note, _)| note.id()).collect();
-        println!("number of notes: {:?}", list_of_note_ids.len());
+        let mut list_of_note_ids: Vec<_> =
+            consumable_notes.iter().map(|(note, _)| note.id()).collect();
 
         // Check if note_id_mint exists in the list_of_note_ids vector
         if list_of_note_ids.contains(&note_id_mint) {
+            list_of_note_ids.push(note_id_mint);
+
             let transaction_request =
-                TransactionRequestBuilder::consume_notes(vec![note_id_mint]).build();
+                TransactionRequestBuilder::consume_notes(list_of_note_ids).build();
             let tx_execution_result = client
                 .new_transaction(alice_account.id(), transaction_request)
                 .await?;
@@ -269,47 +271,36 @@ async fn main() -> Result<(), ClientError> {
     client.sync_state().await?;
 
     // -------------------------------------------------------------------------
-    // STEP 4: Create counter contract increment NOTE using voter account
+    // STEP 4: Hash Secret Number and Build Note
     // -------------------------------------------------------------------------
-    println!("\n[STEP 2] Create note");
+    println!("\n[STEP 4] Create note");
 
     // Hashing Secret number combination
-    let elements = [
-        Felt::new(1),
+    let note_secret_number = [
         Felt::new(0),
         Felt::new(0),
         Felt::new(0),
         Felt::new(0),
+        Felt::new(3),
         Felt::new(0),
         Felt::new(0),
-        Felt::new(1),
+        Felt::new(3),
     ];
-    let digest = Hasher::hash_elements(&elements);
-    println!("digest: {:?}", digest);
+    let secret_number_digest = Hasher::hash_elements(&note_secret_number);
+    println!("digest: {:?}", secret_number_digest);
 
     // Load the MASM script referencing the increment procedure
     let file_path = Path::new("./masm/notes/hash_preimage_note.masm");
-    let original_code = fs::read_to_string(file_path).unwrap();
-
-    let hash_str: Vec<Felt> = digest.to_vec(); // Example vector, replace with your actual data
-    let formatted_str: String = hash_str
-        .iter()
-        .map(|felt| felt.to_string())
-        .collect::<Vec<String>>()
-        .join(".");
-
-    println!("{}", formatted_str);
-
-    // Replace the placeholder with the actual procedure call
-    let replaced_code = original_code.replace("{digest}", &formatted_str);
-    println!("Final script:\n{}", replaced_code);
+    let code = fs::read_to_string(file_path).unwrap();
 
     let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
 
     let rng = client.rng();
     let serial_num = rng.draw_word();
-    let note_script = NoteScript::compile(replaced_code, assembler).unwrap();
-    let note_inputs = NoteInputs::new(vec![]).unwrap();
+    let note_script = NoteScript::compile(code, assembler).unwrap();
+
+    let inputs: [Felt; 4] = secret_number_digest.into();
+    let note_inputs = NoteInputs::new(inputs.into()).unwrap();
 
     let recipient = NoteRecipient::new(serial_num, note_script, note_inputs);
     let tag = NoteTag::for_public_use_case(0, 0, NoteExecutionMode::Local).unwrap();
@@ -351,19 +342,20 @@ async fn main() -> Result<(), ClientError> {
     let _ = client.submit_transaction(tx_result).await;
 
     // Wait, then re-sync
-    println!("waiting 10 seconds");
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    println!("waiting d seconds");
+    // tokio::time::sleep(Duration::from_secs()).await;
     client.sync_state().await.unwrap();
 
     // -------------------------------------------------------------------------
     // STEP 5: Consume Note
     // -------------------------------------------------------------------------
 
-    let secret = [Felt::new(0), Felt::new(3), Felt::new(0), Felt::new(3)];
-    // let note_args = secret;
+    // This is the same number combination used in the secret_number variable
+    let secret = [Felt::new(3), Felt::new(0), Felt::new(0), Felt::new(3)];
 
     let tx_note_consume_request = TransactionRequestBuilder::new()
-        .with_authenticated_input_notes([(increment_note.id(), Some(secret))])
+        // .with_authenticated_input_notes([(increment_note.id(), Some(secret))])
+        .with_unauthenticated_input_notes([(increment_note, Some(secret))])
         .build();
 
     // Execute the transaction locally
@@ -380,9 +372,6 @@ async fn main() -> Result<(), ClientError> {
 
     // Submit transaction to the network
     let _ = client.submit_transaction(tx_result).await;
-    println!("waiting 10 seconds");
-    tokio::time::sleep(Duration::from_secs(10)).await;
-    client.sync_state().await.unwrap();
 
     Ok(())
 }

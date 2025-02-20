@@ -1,9 +1,35 @@
+use.miden::note
+use.miden::contracts::wallets::basic->wallet
 
 # => [HASH_PREIMAGE]
 begin
 
-  push.3030 debug.stack drop
+  # => [HASH_PREIMAGE]
+  hperm
 
-  push.{digest}
+  # => [F,E,D]
+  # E is digest
+  dropw swapw dropw
+
+  # => [DIGEST]
+  push.0 exec.note::get_inputs drop drop
+
+  # => [DIGEST]
+  padw push.0 mem_loadw
+
+  # => [INPUTS, DIGEST]
+  assert_eqw
+
+  # => []
+  push.0 exec.note::get_assets
+
+  # => [num_assets, dest_ptr]
+  drop
+
+  # => [dest_ptr]
+  mem_loadw
+
+  # => [ASSET]
+  call.wallet::receive_asset
 
 end

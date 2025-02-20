@@ -315,7 +315,7 @@ async fn main() -> Result<(), ClientError> {
 
     // Execute the transaction locally
     let tx_result = client
-        .new_transaction(counter_contract.id(), tx_note_consume_request)
+        .new_transaction(counter_contract_details.id(), tx_note_consume_request)
         .await
         .unwrap();
 
