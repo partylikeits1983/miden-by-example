@@ -15,7 +15,7 @@ use miden_client::{
 };
 
 use miden_objects::{
-    account::{AccountBuilder, AccountComponent, AuthSecretKey, StorageMap, StorageSlot},
+    account::{AccountBuilder, AccountComponent, AuthSecretKey, StorageSlot},
     assembly::Assembler,
     crypto::dsa::rpo_falcon512::SecretKey,
     Word,

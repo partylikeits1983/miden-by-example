@@ -3,7 +3,6 @@ use std::{fs, path::Path, sync::Arc};
 use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
-use tokio::time::Duration;
 
 use miden_client::{
     account::{AccountStorageMode, AccountType},
@@ -14,7 +13,7 @@ use miden_client::{
     Client, ClientError, Felt,
 };
 
-use miden_crypto::hash::rpo::{Rpo256 as Hasher, RpoDigest as Digest};
+use miden_crypto::hash::rpo::Rpo256 as Hasher;
 use miden_objects::{
     account::{AccountBuilder, AccountComponent, AuthSecretKey, StorageSlot},
     assembly::Assembler,

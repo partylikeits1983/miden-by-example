@@ -22,13 +22,10 @@ use miden_client::{
     transaction::{OutputNote, TransactionKernel, TransactionRequestBuilder},
     Client, ClientError, Felt,
 };
-use miden_crypto::hash::rpo::{Rpo256 as Hasher, RpoDigest as Digest};
+use miden_crypto::hash::rpo::Rpo256 as Hasher;
 
 use miden_objects::{
-    account::{AccountComponent, AccountStorage, AuthSecretKey, StorageSlot},
-    assembly::Assembler,
-    crypto::{dsa::rpo_falcon512::SecretKey, hash::rpo::RpoDigest},
-    Word,
+    account::AuthSecretKey, assembly::Assembler, crypto::dsa::rpo_falcon512::SecretKey, Word,
 };
 
 pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {

@@ -97,7 +97,7 @@ async fn main() -> Result<(), ClientError> {
     println!("Latest block: {}", sync_summary.block_num);
 
     //------------------------------------------------------------
-    // STEP 1: Create a basic account for Voter
+    // STEP 1: Create a basic account for user
     //------------------------------------------------------------
     println!("\n[STEP 1] Creating a new account for Alice");
 
@@ -139,7 +139,7 @@ async fn main() -> Result<(), ClientError> {
     println!("\n[STEP 1] Building counter contract from public state");
 
     // Define the Counter Contract account id from counter contract deploy
-    let counter_contract_id = AccountId::from_hex("0x2b79dc81b4afea0000057e9b2daffd").unwrap();
+    let counter_contract_id = AccountId::from_hex("0x95cef1051e74fb000005b23f08c5eb").unwrap();
 
     let account_details = client
         .test_rpc_api()
@@ -207,7 +207,7 @@ async fn main() -> Result<(), ClientError> {
         .unwrap();
 
     // -------------------------------------------------------------------------
-    // STEP 3: Create counter contract increment NOTE using voter account
+    // STEP 3: Create counter contract increment NOTE with user account
     // -------------------------------------------------------------------------
     println!("\n[STEP 2] Call the increment_count procedure in the counter contract");
 
@@ -281,7 +281,6 @@ async fn main() -> Result<(), ClientError> {
     // Build a transaction request with the custom script
 
     let incr_note_create_request = TransactionRequestBuilder::new()
-        // .with_expected_output_notes([vote_note].to_vec())
         .with_own_output_notes([output_note].to_vec())
         .unwrap()
         .build();

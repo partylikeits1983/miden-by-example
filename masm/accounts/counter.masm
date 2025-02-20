@@ -14,7 +14,7 @@ export.get_count
 end
 
 export.increment_count
-    push.303 debug.stack drop
+    push.222 debug.stack drop
 
     # => []
     push.0
@@ -39,4 +39,5 @@ export.increment_count
     # => []
     exec.sys::truncate_stack
 
+    push.333 debug.stack drop
 end
