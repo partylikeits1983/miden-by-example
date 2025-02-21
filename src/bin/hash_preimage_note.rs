@@ -1,10 +1,7 @@
 use std::{fs, path::Path, sync::Arc};
 
-use miden_crypto::rand::FeltRng;
 use rand::Rng;
-use rand_chacha::rand_core::SeedableRng;
-use rand_chacha::ChaCha20Rng;
-use tokio::time::Duration;
+use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
 
 use miden_client::{
     account::{
@@ -22,66 +19,106 @@ use miden_client::{
     transaction::{OutputNote, TransactionKernel, TransactionRequestBuilder},
     Client, ClientError, Felt,
 };
-use miden_crypto::hash::rpo::Rpo256 as Hasher;
+
+use miden_crypto::{hash::rpo::Rpo256 as Hasher, rand::FeltRng};
 
 use miden_objects::{
     account::AuthSecretKey, assembly::Assembler, crypto::dsa::rpo_falcon512::SecretKey, Word,
 };
 
+// Initialize client helper
 pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {
-    // RPC endpoint and timeout
-
     let endpoint = Endpoint::new(
         "https".to_string(),
         "rpc.testnet.miden.io".to_string(),
         Some(443),
     );
-    // let endpoint = Endpoint::new("http".to_string(), "localhost".to_string(), Some(57291));
     let timeout_ms = 10_000;
 
-    // Build RPC client
     let rpc_api = Box::new(TonicRpcClient::new(endpoint, timeout_ms));
 
-    // Seed RNG
     let mut seed_rng = rand::thread_rng();
     let coin_seed: [u64; 4] = seed_rng.gen();
 
-    // Create random coin instance
     let rng = RpoRandomCoin::new(coin_seed.map(Felt::new));
 
-    // SQLite path
     let store_path = "store.sqlite3";
-
-    // Initialize SQLite store
     let store = SqliteStore::new(store_path.into())
         .await
         .map_err(ClientError::StoreError)?;
     let arc_store = Arc::new(store);
 
-    // Create authenticator referencing the store and RNG
     let authenticator = StoreAuthenticator::new_with_rng(arc_store.clone(), rng.clone());
-
-    // Instantiate client (toggle debug mode as needed)
     let client = Client::new(rpc_api, rng, arc_store, Arc::new(authenticator), true);
 
     Ok(client)
 }
 
+// Helper to create keys & authenticator
 pub fn get_new_pk_and_authenticator() -> (Word, AuthSecretKey) {
-    // Create a deterministic RNG with zeroed seed
     let seed = [0_u8; 32];
     let mut rng = ChaCha20Rng::from_seed(seed);
 
-    // Generate Falcon-512 secret key
     let sec_key = SecretKey::with_rng(&mut rng);
-
-    // Convert public key to `Word` (4xFelt)
     let pub_key: Word = sec_key.public_key().into();
-
-    // Wrap secret key in `AuthSecretKey`
     let auth_secret_key = AuthSecretKey::RpoFalcon512(sec_key);
 
     (pub_key, auth_secret_key)
+}
+
+// Helper to create a basic account (for Alice and Bob)
+async fn create_basic_account(
+    client: &mut Client<RpoRandomCoin>,
+) -> Result<miden_client::account::Account, ClientError> {
+    let mut init_seed = [0u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+    let key_pair = SecretKey::with_rng(client.rng());
+    let anchor_block = client.get_latest_epoch_block().await.unwrap();
+    let builder = AccountBuilder::new(init_seed)
+        .anchor((&anchor_block).try_into().unwrap())
+        .account_type(AccountType::RegularAccountUpdatableCode)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(RpoFalcon512::new(key_pair.public_key()))
+        .with_component(BasicWallet);
+    let (account, seed) = builder.build().unwrap();
+    client
+        .add_account(
+            &account,
+            Some(seed),
+            &AuthSecretKey::RpoFalcon512(key_pair),
+            false,
+        )
+        .await?;
+    Ok(account)
+}
+
+// Helper to deploy a fungible faucet account
+async fn deploy_faucet(
+    client: &mut Client<RpoRandomCoin>,
+    symbol: TokenSymbol,
+    decimals: u8,
+    max_supply: Felt,
+) -> Result<miden_client::account::Account, ClientError> {
+    let mut init_seed = [0u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+    let anchor_block = client.get_latest_epoch_block().await.unwrap();
+    let key_pair = SecretKey::with_rng(client.rng());
+    let builder = AccountBuilder::new(init_seed)
+        .anchor((&anchor_block).try_into().unwrap())
+        .account_type(AccountType::FungibleFaucet)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(RpoFalcon512::new(key_pair.public_key()))
+        .with_component(BasicFungibleFaucet::new(symbol, decimals, max_supply).unwrap());
+    let (account, seed) = builder.build().unwrap();
+    client
+        .add_account(
+            &account,
+            Some(seed),
+            &AuthSecretKey::RpoFalcon512(key_pair),
+            false,
+        )
+        .await?;
+    Ok(account)
 }
 
 #[tokio::main]
@@ -95,125 +132,30 @@ async fn main() -> Result<(), ClientError> {
     println!("Latest block: {}", sync_summary.block_num);
 
     //------------------------------------------------------------
-    // STEP 1: Create basic accounts
+    // STEP 1: Create two basic accounts (Alice and Bob)
     //------------------------------------------------------------
-    println!("\n[STEP 1] Creating a new account");
-
-    // Account seed
-    let mut init_seed = [0u8; 32];
-    client.rng().fill_bytes(&mut init_seed);
-
-    // Generate key pair
-    let key_pair = SecretKey::with_rng(client.rng());
-
-    // Anchor block
-    let anchor_block = client.get_latest_epoch_block().await.unwrap();
-
-    // Build the account
-    let builder = AccountBuilder::new(init_seed)
-        .anchor((&anchor_block).try_into().unwrap())
-        .account_type(AccountType::RegularAccountUpdatableCode)
-        .storage_mode(AccountStorageMode::Public)
-        .with_component(RpoFalcon512::new(key_pair.public_key()))
-        .with_component(BasicWallet);
-
-    let (alice_account, seed) = builder.build().unwrap();
-
-    // Add the account to the client
-    client
-        .add_account(
-            &alice_account,
-            Some(seed),
-            &AuthSecretKey::RpoFalcon512(key_pair),
-            false,
-        )
-        .await?;
-
+    println!("\n[STEP 1] Creating new accounts");
+    let alice_account = create_basic_account(&mut client).await?;
     println!("Alice's account ID: {:?}", alice_account.id().to_hex());
-
-    // Account seed
-    let mut init_seed = [0u8; 32];
-    client.rng().fill_bytes(&mut init_seed);
-
-    // Generate key pair
-    let key_pair = SecretKey::with_rng(client.rng());
-
-    // Anchor block
-    let anchor_block = client.get_latest_epoch_block().await.unwrap();
-
-    // Build the account
-    let builder = AccountBuilder::new(init_seed)
-        .anchor((&anchor_block).try_into().unwrap())
-        .account_type(AccountType::RegularAccountUpdatableCode)
-        .storage_mode(AccountStorageMode::Public)
-        .with_component(RpoFalcon512::new(key_pair.public_key()))
-        .with_component(BasicWallet);
-
-    let (bob_account, seed) = builder.build().unwrap();
-
-    // Add the account to the client
-    client
-        .add_account(
-            &bob_account,
-            Some(seed),
-            &AuthSecretKey::RpoFalcon512(key_pair),
-            false,
-        )
-        .await?;
-
+    let bob_account = create_basic_account(&mut client).await?;
     println!("Bob's account ID: {:?}", bob_account.id().to_hex());
 
     //------------------------------------------------------------
     // STEP 2: Deploy a fungible faucet
     //------------------------------------------------------------
     println!("\n[STEP 2] Deploying a new fungible faucet.");
-
-    // Faucet seed
-    let mut init_seed = [0u8; 32];
-    client.rng().fill_bytes(&mut init_seed);
-
-    // Anchor block
-    let anchor_block = client.get_latest_epoch_block().await.unwrap();
-
-    // Faucet parameters
     let symbol = TokenSymbol::new("MID").unwrap();
     let decimals = 8;
     let max_supply = Felt::new(1_000_000);
-
-    // Generate key pair
-    let key_pair = SecretKey::with_rng(client.rng());
-
-    // Build the account
-    let builder = AccountBuilder::new(init_seed)
-        .anchor((&anchor_block).try_into().unwrap())
-        .account_type(AccountType::FungibleFaucet)
-        .storage_mode(AccountStorageMode::Public)
-        .with_component(RpoFalcon512::new(key_pair.public_key()))
-        .with_component(BasicFungibleFaucet::new(symbol, decimals, max_supply).unwrap());
-
-    let (faucet_account, seed) = builder.build().unwrap();
-
-    // Add the faucet to the client
-    client
-        .add_account(
-            &faucet_account,
-            Some(seed),
-            &AuthSecretKey::RpoFalcon512(key_pair),
-            false,
-        )
-        .await?;
-
+    let faucet_account = deploy_faucet(&mut client, symbol, decimals, max_supply).await?;
     println!("Faucet account ID: {:?}", faucet_account.id().to_hex());
 
-    // Resync to show newly deployed faucet
-    tokio::time::sleep(Duration::from_secs(2)).await;
     client.sync_state().await?;
 
     //------------------------------------------------------------
-    // STEP 3: Mint and consume tokens for Alice
+    // STEP 3: Mint and consume tokens for Alice with Ephemeral P2ID
     //------------------------------------------------------------
-    println!("\n[STEP 3] Mint tokens");
-
+    println!("\n[STEP 3] Mint tokens with Ephemeral P2ID");
     let amount: u64 = 100;
     let fungible_asset_mint_amount = FungibleAsset::new(faucet_account.id(), amount).unwrap();
 
@@ -225,49 +167,30 @@ async fn main() -> Result<(), ClientError> {
     )
     .unwrap()
     .build();
+
     let tx_execution_result = client
         .new_transaction(faucet_account.id(), transaction_request)
         .await?;
-
     client
         .submit_transaction(tx_execution_result.clone())
         .await?;
 
-    let note_id_mint = tx_execution_result.created_notes().get_note(0).id();
-
-    // consuming
-    loop {
-        // Resync to get the latest data
-        client.sync_state().await?;
-
-        let consumable_notes = client
-            .get_consumable_notes(Some(alice_account.id()))
-            .await?;
-        let mut list_of_note_ids: Vec<_> =
-            consumable_notes.iter().map(|(note, _)| note.id()).collect();
-
-        // Check if note_id_mint exists in the list_of_note_ids vector
-        if list_of_note_ids.contains(&note_id_mint) {
-            list_of_note_ids.push(note_id_mint);
-
-            let transaction_request =
-                TransactionRequestBuilder::consume_notes(list_of_note_ids).build();
-            let tx_execution_result = client
-                .new_transaction(alice_account.id(), transaction_request)
-                .await?;
-
-            let delta = tx_execution_result.account_delta();
-            println!("delta: {:?}", delta);
-
-            client.submit_transaction(tx_execution_result).await?;
-            break;
+    // The minted fungible asset is public so output is a `Full` note type
+    let p2id_note: Note =
+        if let OutputNote::Full(note) = tx_execution_result.created_notes().get_note(0) {
+            note.clone()
         } else {
-            println!("waiting");
-            tokio::time::sleep(Duration::from_secs(2)).await;
-        }
-    }
+            panic!("Expected Full note type");
+        };
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    let transaction_request = TransactionRequestBuilder::new()
+        .with_unauthenticated_input_notes([(p2id_note, None)])
+        .build();
+
+    let tx_execution_result = client
+        .new_transaction(alice_account.id(), transaction_request)
+        .await?;
+    client.submit_transaction(tx_execution_result).await?;
     client.sync_state().await?;
 
     // -------------------------------------------------------------------------
@@ -275,26 +198,16 @@ async fn main() -> Result<(), ClientError> {
     // -------------------------------------------------------------------------
     println!("\n[STEP 4] Create note");
 
-    // Hashing Secret number combination
-    let note_secret_number = [
-        Felt::new(0),
-        Felt::new(0),
-        Felt::new(0),
-        Felt::new(0),
-        Felt::new(3),
-        Felt::new(0),
-        Felt::new(0),
-        Felt::new(3),
-    ];
+    // Hashing secret number combination
+    let mut note_secret_number = vec![Felt::new(1), Felt::new(2), Felt::new(3), Felt::new(4)];
+    // Prepend an empty word (4 zero Felts) for the RPO
+    note_secret_number.splice(0..0, Word::default().iter().cloned());
     let secret_number_digest = Hasher::hash_elements(&note_secret_number);
     println!("digest: {:?}", secret_number_digest);
 
-    // Load the MASM script referencing the increment procedure
+    let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
     let file_path = Path::new("./masm/notes/hash_preimage_note.masm");
     let code = fs::read_to_string(file_path).unwrap();
-
-    let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
-
     let rng = client.rng();
     let serial_num = rng.draw_word();
     let note_script = NoteScript::compile(code, assembler).unwrap();
@@ -304,7 +217,6 @@ async fn main() -> Result<(), ClientError> {
 
     let recipient = NoteRecipient::new(serial_num, note_script, note_inputs);
     let tag = NoteTag::for_public_use_case(0, 0, NoteExecutionMode::Local).unwrap();
-
     let aux = Felt::new(0);
     let metadata = NoteMetadata::new(
         alice_account.id(),
@@ -315,62 +227,46 @@ async fn main() -> Result<(), ClientError> {
     )?;
     let vault = NoteAssets::new(vec![fungible_asset_mint_amount.clone().into()])?;
 
-    // Building note
     let increment_note = Note::new(vault, metadata, recipient);
     println!("note hash: {:?}", increment_note.hash());
 
     let output_note = OutputNote::Full(increment_note.clone());
-
     let incr_note_create_request = TransactionRequestBuilder::new()
         .with_own_output_notes([output_note].to_vec())
         .unwrap()
         .build();
 
-    // Execute the transaction locally
     let tx_result = client
         .new_transaction(alice_account.id(), incr_note_create_request)
         .await
         .unwrap();
-
     let tx_id = tx_result.executed_transaction().id();
     println!(
         "View transaction on MidenScan: https://testnet.midenscan.com/tx/{:?}",
         tx_id
     );
-
-    // Submit transaction to the network
     let _ = client.submit_transaction(tx_result).await;
-
-    // Wait, then re-sync
-    println!("waiting d seconds");
-    // tokio::time::sleep(Duration::from_secs()).await;
     client.sync_state().await.unwrap();
 
     // -------------------------------------------------------------------------
     // STEP 5: Consume Note
     // -------------------------------------------------------------------------
-
-    // This is the same number combination used in the secret_number variable
-    let secret = [Felt::new(3), Felt::new(0), Felt::new(0), Felt::new(3)];
+    println!("\n[STEP 5] Bob consumes the Ephemeral Hash Preimage Note with Correct Secret");
+    let secret = [Felt::new(1), Felt::new(2), Felt::new(3), Felt::new(4)];
 
     let tx_note_consume_request = TransactionRequestBuilder::new()
-        // .with_authenticated_input_notes([(increment_note.id(), Some(secret))])
         .with_unauthenticated_input_notes([(increment_note, Some(secret))])
         .build();
 
-    // Execute the transaction locally
     let tx_result = client
         .new_transaction(bob_account.id(), tx_note_consume_request)
         .await
         .unwrap();
-
     let tx_id = tx_result.executed_transaction().id();
     println!(
         "Consumed Note Tx on MidenScan: https://testnet.midenscan.com/tx/{:?}",
         tx_id
     );
-
-    // Submit transaction to the network
     let _ = client.submit_transaction(tx_result).await;
 
     Ok(())
