@@ -208,5 +208,22 @@ async fn main() -> Result<(), ClientError> {
     // Submit transaction to the network
     let _ = client.submit_transaction(tx_result).await;
 
+    client.sync_state().await.unwrap();
+
+    let account = client
+        .get_account(mapping_example_contract.id())
+        .await
+        .unwrap();
+    let index = 0;
+    let key = [Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(0)];
+    println!(
+        "counter contract storage: {:?}",
+        account
+            .unwrap()
+            .account()
+            .storage()
+            .get_map_item(index, key)
+    );
+
     Ok(())
 }

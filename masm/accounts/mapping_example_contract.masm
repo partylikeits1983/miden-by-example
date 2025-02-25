@@ -3,8 +3,37 @@ use.std::sys
 use.miden::note
 use.std::crypto::hashes::rpo
 
+# Inputs: [KEY, VALUE]
+# Outputs: []
 export.add_to_map
-  push.111 debug.stack drop
+  # Getting the current root from slot 0
+  # push.0 exec.account::get_item
+  # => [CURRENT_ROOT, KEY, VALUE]
+
+  # Arranging the stack to be key, value, root
+  #swapw.3
+  # => [EMPTY_WORD, KEY, VALUE, CURRENT_ROOT]
+
+  # Dropping empty word
+  # dropw
+  # => [KEY, VALUE, CURRENT_ROOT]
+
+  push.222 debug.stack drop
+
+  push.0
+  # => [index, KEY, VALUE]
+
+  # Setting the key value pair in the map
+  exec.account::set_map_item
+  # => [OLD_MAP_ROOT, OLD_MAP_VALUE, pad(8)]
+
+  push.333 debug.stack drop
+
+  push.1 exec.account::incr_nonce
+
+  dropw dropw dropw dropw
+
+
 end
 
 export.remove_from_map
