@@ -1,5 +1,5 @@
 [package]
-name = "miden-tx"
+name = "miden-by-example"
 version = "0.1.0"
 edition = "2021"
 
@@ -14,3 +14,4 @@ serde_json = { version = "1.0", features = ["raw_value"] }
 tokio = { version = "1.40", features = ["rt-multi-thread", "net", "macros"] }
 rand_chacha = "0.3.1"
 hex = "0.4.3"
+miden-assembly = "0.12.0"

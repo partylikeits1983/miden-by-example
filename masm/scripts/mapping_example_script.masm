@@ -1,0 +1,6 @@
+use.miden_by_example::mapping_example_contract
+
+begin
+  push.101 debug.stack drop
+  call.mapping_example_contract::add_to_map
+end

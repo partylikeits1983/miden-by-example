@@ -3,10 +3,9 @@ use std::{fs, path::Path, sync::Arc};
 use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
-use tokio::time::Duration;
 
 use miden_client::{
-    account::{component::RpoFalcon512, AccountStorageMode, AccountType},
+    account::{AccountStorageMode, AccountType},
     crypto::RpoRandomCoin,
     rpc::{Endpoint, TonicRpcClient},
     store::{sqlite_store::SqliteStore, StoreAuthenticator},
@@ -16,9 +15,15 @@ use miden_client::{
 
 use miden_objects::{
     account::{AccountBuilder, AccountComponent, AuthSecretKey, StorageMap, StorageSlot},
-    assembly::Assembler,
+    assembly::{Assembler, DefaultSourceManager},
     crypto::dsa::rpo_falcon512::SecretKey,
+    transaction::TransactionScript,
     Word,
+};
+
+use miden_assembly::{
+    ast::{Module, ModuleKind},
+    LibraryPath,
 };
 
 pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {
@@ -28,7 +33,6 @@ pub async fn initialize_client() -> Result<Client<RpoRandomCoin>, ClientError> {
         "rpc.testnet.miden.io".to_string(),
         Some(443),
     );
-    // let endpoint = Endpoint::new("http".to_string(), "localhost".to_string(), Some(57291));
     let timeout_ms = 10_000;
 
     // Build RPC client
@@ -76,39 +80,58 @@ pub fn get_new_pk_and_authenticator() -> (Word, AuthSecretKey) {
     (pub_key, auth_secret_key)
 }
 
+/// Creates a library from the provided source code and library path.
+///
+/// # Arguments
+/// * `assembler` - The assembler instance used to build the library.
+/// * `library_path` - The full library path as a string (e.g., "custom_contract::mapping_example").
+/// * `source_code` - The MASM source code for the module.
+///
+/// # Returns
+/// A `miden_assembly::Library` that can be added to the transaction script.
+fn create_library(
+    assembler: Assembler,
+    library_path: &str,
+    source_code: &str,
+) -> Result<miden_assembly::Library, Box<dyn std::error::Error>> {
+    let source_manager = Arc::new(DefaultSourceManager::default());
+    let module = Module::parser(ModuleKind::Library).parse_str(
+        LibraryPath::new(library_path)?,
+        source_code,
+        &source_manager,
+    )?;
+    let library = assembler.clone().assemble_library([module])?;
+    Ok(library)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), ClientError> {
-    // Initialize client
+    // -------------------------------------------------------------------------
+    // Initialize the Miden client
+    // -------------------------------------------------------------------------
     let mut client = initialize_client().await?;
     println!("Client initialized successfully.");
 
-    // Fetch latest block from node
+    // Fetch and display the latest synchronized block number from the node.
     let sync_summary = client.sync_state().await.unwrap();
     println!("Latest block: {}", sync_summary.block_num);
 
-    // -------------------------------------------------------------------------
-    // STEP 1: Create a basic counter contract
-    // -------------------------------------------------------------------------
-    println!("\n[STEP 1] Creating counter contract.");
-
     // Load the MASM file for the counter contract
-    let file_path = Path::new("./masm/accounts/voting_contract.masm");
+    let file_path = Path::new("./masm/accounts/mapping_example_contract.masm");
     let account_code = fs::read_to_string(file_path).unwrap();
 
     // Prepare assembler (debug mode = true)
     let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
 
-    let storage_slot_value_0 =
-        StorageSlot::Value([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(0)]);
-
+    // initialize storage map
     let storage_map = StorageMap::new();
     let storage_slot_map = StorageSlot::Map(storage_map.clone());
 
-    // Compile the account code into `AccountComponent` with the storage slots
-    let contract_component = AccountComponent::compile(
-        account_code,
-        assembler,
-        vec![storage_slot_value_0, storage_slot_map],
+    // Compile the account code into `AccountComponent` with one storage slot
+    let mapping_contract_component = AccountComponent::compile(
+        account_code.clone(),
+        assembler.clone(),
+        vec![storage_slot_map],
     )
     .unwrap()
     .with_supports_all_types();
@@ -119,92 +142,50 @@ async fn main() -> Result<(), ClientError> {
     // Anchor block of the account
     let anchor_block = client.get_latest_epoch_block().await.unwrap();
 
-    // For only owner:
-    // let key_pair = SecretKey::with_rng(client.rng());
-
     // Build the new `Account` with the component
-    let (voting_contract, voting_seed) = AccountBuilder::new(init_seed)
+    let (mapping_example_contract, _seed) = AccountBuilder::new(init_seed)
         .anchor((&anchor_block).try_into().unwrap())
         .account_type(AccountType::RegularAccountImmutableCode)
         .storage_mode(AccountStorageMode::Public)
-        .with_component(contract_component.clone())
-        // .with_component(RpoFalcon512::new(key_pair.public_key()))
+        .with_component(mapping_contract_component.clone())
         .build()
         .unwrap();
 
-    println!("contract id: {:?}", voting_contract.id().to_hex());
-    println!("account_storage: {:?}", voting_contract.storage().slots());
-
-    // Since the counter contract is public and does sign any transactions, auth_secret_key is not required.
-    // However, to import to the client, we must generate a random value.
-    let (_counter_pub_key, auth_secret_key) = get_new_pk_and_authenticator();
+    let (_, auth_secret_key) = get_new_pk_and_authenticator();
 
     client
         .add_account(
-            &voting_contract.clone(),
-            Some(voting_seed),
+            &&mapping_example_contract.clone(),
+            Some(_seed),
             &auth_secret_key,
             false,
         )
         .await
         .unwrap();
 
-    // Print the procedure root hash
-    let get_proc_export = contract_component
-        .library()
-        .exports()
-        .find(|export| export.name.as_str() == "create_vote")
-        .unwrap();
-
-    let get_increment_count_mast_id = contract_component
-        .library()
-        .get_export_node_id(get_proc_export);
-
-    let create_vote_hash = contract_component
-        .library()
-        .mast_forest()
-        .get_node_by_id(get_increment_count_mast_id)
-        .unwrap()
-        .digest()
-        .to_hex();
-
-    println!("create_vote procedure hash: {:?}", create_vote_hash);
-
-    // Print the procedure root hash
-    let get_vote_export = contract_component
-        .library()
-        .exports()
-        .find(|export| export.name.as_str() == "vote")
-        .unwrap();
-
-    let get_vote_mast_id = contract_component
-        .library()
-        .get_export_node_id(get_vote_export);
-
-    let vote_proc_hash = contract_component
-        .library()
-        .mast_forest()
-        .get_node_by_id(get_vote_mast_id)
-        .unwrap()
-        .digest()
-        .to_hex();
-    println!("vote procedure hash: {:?}", vote_proc_hash);
-
     // -------------------------------------------------------------------------
-    // STEP 2: Call the Counter Contract with a script
+    // STEP 2: Call the Mapping Contract with a script
     // -------------------------------------------------------------------------
-    println!("\n[STEP 2] Call Counter Contract With Script");
+    println!("\n[STEP 2] Call Mapping Contract With Script");
 
-    // Load the MASM script referencing the increment procedure
-    let file_path = Path::new("./masm/scripts/voting_script.masm");
-    let original_code = fs::read_to_string(file_path).unwrap();
+    let script_code =
+        fs::read_to_string(Path::new("./masm/scripts/mapping_example_script.masm")).unwrap();
 
-    // Replace the placeholder with the actual procedure call
-    let replaced_code = original_code.replace("{vote}", &vote_proc_hash);
-    println!("Final script:\n{}", replaced_code);
+    // Create the library from the account source code using the helper function.
+    let account_component_lib = create_library(
+        assembler.clone(),
+        "miden_by_example::mapping_example_contract",
+        &account_code,
+    )
+    .unwrap();
 
-    // Compile the script referencing our procedure
-    let tx_script = client.compile_tx_script(vec![], &replaced_code).unwrap();
+    // Compile the transaction script with the library.
+    let tx_script = TransactionScript::compile(
+        script_code,
+        [],
+        assembler.with_library(&account_component_lib).unwrap(),
+    )
+    .unwrap();
 
     // Build a transaction request with the custom script
     let tx_increment_request = TransactionRequestBuilder::new()
@@ -214,7 +195,7 @@ async fn main() -> Result<(), ClientError> {
 
     // Execute the transaction locally
     let tx_result = client
-        .new_transaction(voting_contract.id(), tx_increment_request)
+        .new_transaction(mapping_example_contract.id(), tx_increment_request)
         .await
         .unwrap();
 
@@ -226,19 +207,6 @@ async fn main() -> Result<(), ClientError> {
 
     // Submit transaction to the network
     let _ = client.submit_transaction(tx_result).await;
-
-    // Wait, then re-sync
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    client.sync_state().await.unwrap();
-
-    /*
-    // Retrieve updated contract data to see the incremented counter
-    let account = client.get_account(voting_contract.id()).await.unwrap();
-    println!(
-        "counter contract storage: {:?}",
-        account.unwrap().account().storage()
-    );
-    */
 
     Ok(())
 }

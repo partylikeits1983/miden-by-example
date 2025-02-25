@@ -1,0 +1,16 @@
+use.miden::account
+use.std::sys
+use.miden::note
+use.std::crypto::hashes::rpo
+
+export.add_to_map
+  push.111 debug.stack drop
+end
+
+export.remove_from_map
+  push.222 debug.stack drop
+end
+
+export.check_in_map
+  push.333 debug.stack drop
+end

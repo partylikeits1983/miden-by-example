@@ -1198,6 +1198,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "miden-by-example"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "miden-assembly",
+ "miden-client",
+ "miden-crypto",
+ "miden-lib",
+ "miden-objects",
+ "rand",
+ "rand_chacha",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "miden-client"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1210,7 +1227,7 @@ dependencies = [
  "miden-lib",
  "miden-objects",
  "miden-rpc-proto",
- "miden-tx 0.7.0",
+ "miden-tx",
  "miette",
  "pollster",
  "prost",
@@ -1391,22 +1408,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "001a8c957ea655e96c91f081cf6bf99bb35109e3a20acda1c2a87e2db53a2696"
 dependencies = [
  "miden-assembly",
-]
-
-[[package]]
-name = "miden-tx"
-version = "0.1.0"
-dependencies = [
- "hex",
- "miden-client",
- "miden-crypto",
- "miden-lib",
- "miden-objects",
- "rand",
- "rand_chacha",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
