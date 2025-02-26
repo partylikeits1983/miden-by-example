@@ -1,0 +1,54 @@
+use.miden::note
+use.miden::contracts::wallets::basic->wallet
+
+# => [SOLUTION]
+begin
+    # => [SOLUTION]
+
+    # get inputs
+    push.0 exec.note::get_inputs drop drop
+    # => [SOLUTION]
+
+    padw push.0 mem_loadw
+    # => [POW_INPUT, SOLUTION]
+
+    swapw
+    # => [SOLUTION, POW_INPUT]
+
+    hperm
+    # => [F,E,D]
+    # E is digest
+
+    dropw swapw dropw
+    # => [DIGEST]
+
+    drop drop drop
+    # => [digest[0]]
+
+    push.4 mem_load
+    # => [target, digest[0]]
+
+    lt
+    # => [bool]
+
+    push.1 assert_eq
+    # => []
+
+    push.444 debug.stack drop
+
+    # => []
+    # write assets in note to memory address 0
+    push.0 exec.note::get_assets
+
+    # => [num_assets, dest_ptr]
+    drop
+
+    # => [dest_ptr]
+    # load asset from memory
+    mem_loadw
+
+    # => [ASSET]
+    # call receive asset in wallet
+    call.wallet::receive_asset
+
+end
